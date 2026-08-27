@@ -660,6 +660,14 @@ def call_deepseek(
         choice.get("finish_reason"),
         elapsed,
     )
+    try:
+        pretty = json.dumps(json.loads(content), indent=2, ensure_ascii=False)
+    except Exception:
+        pretty = content
+    print("\n========== DeepSeek puzzle JSON ==========", flush=True)
+    print(pretty, flush=True)
+    print("==========================================\n", flush=True)
+    logger.info("get_puzzle: DeepSeek JSON response:\n%s", pretty)
     return content, choice.get("finish_reason")
 
 

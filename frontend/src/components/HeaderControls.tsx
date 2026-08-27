@@ -10,6 +10,8 @@ interface Props {
   onShowSolution?: () => void;
   showingSolution?: boolean;
   isGenerating?: boolean;
+  sessionScore?: number;
+  onOpenDuel?: () => void;
 }
 
 export const HeaderControls: React.FC<Props> = ({
@@ -20,6 +22,8 @@ export const HeaderControls: React.FC<Props> = ({
   onShowSolution,
   showingSolution = false,
   isGenerating = false,
+  sessionScore = 0,
+  onOpenDuel,
 }) => {
   const difficulties: { key: Difficulty; label: string; gridLabel: string }[] = [
     { key: 'easy', label: 'Easy', gridLabel: '5x5' },
@@ -31,8 +35,22 @@ export const HeaderControls: React.FC<Props> = ({
     <View style={styles.headerContainer}>
       <Text style={styles.title}>Spell Path</Text>
       <Text style={styles.subtitle}>Connect letters orthogonally to spell the target word!</Text>
+      <View style={styles.scoreChip}>
+        <Text style={styles.scoreLabel}>TOTAL SCORE</Text>
+        <Text style={styles.scoreValue}>{sessionScore.toFixed(2)}</Text>
+      </View>
 
-      {/* Difficulty selector */}
+      {onOpenDuel ? (
+        <TouchableOpacity
+          activeOpacity={0.85}
+          style={styles.duelBtn}
+          onPress={onOpenDuel}
+          disabled={isGenerating}
+        >
+          <Text style={styles.duelBtnText}>⚔️ Async Duel</Text>
+          <Text style={styles.duelBtnSub}>6-puzzle challenge · beat a friend's record</Text>
+        </TouchableOpacity>
+      ) : null}
       <View style={styles.difficultyRow}>
         {difficulties.map((diff) => {
           const isSelected = selectedDifficulty === diff.key;
@@ -145,8 +163,50 @@ const styles = StyleSheet.create({
     fontSize: 13,
     color: '#64748b',
     marginTop: 2,
-    marginBottom: 14,
+    marginBottom: 10,
     textAlign: 'center',
+  },
+  scoreChip: {
+    backgroundColor: '#eef2ff',
+    borderRadius: 12,
+    paddingVertical: 8,
+    paddingHorizontal: 18,
+    alignItems: 'center',
+    marginBottom: 12,
+    minWidth: 140,
+  },
+  scoreLabel: {
+    fontSize: 10,
+    fontWeight: '800',
+    color: '#6366f1',
+    letterSpacing: 1.2,
+  },
+  scoreValue: {
+    fontSize: 22,
+    fontWeight: '900',
+    color: '#312e81',
+    marginTop: 1,
+  },
+  duelBtn: {
+    width: '100%',
+    maxWidth: 380,
+    backgroundColor: '#0f766e',
+    borderRadius: 12,
+    paddingVertical: 12,
+    paddingHorizontal: 14,
+    alignItems: 'center',
+    marginBottom: 12,
+  },
+  duelBtnText: {
+    color: '#ffffff',
+    fontWeight: '900',
+    fontSize: 16,
+  },
+  duelBtnSub: {
+    marginTop: 2,
+    color: '#ccfbf1',
+    fontWeight: '600',
+    fontSize: 12,
   },
   difficultyRow: {
     flexDirection: 'row',

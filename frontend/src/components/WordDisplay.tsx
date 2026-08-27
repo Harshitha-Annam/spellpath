@@ -1,5 +1,7 @@
 import React from 'react';
 import { View, Text, StyleSheet } from 'react-native';
+import { ScoreResult } from '../types';
+import { formatScore } from '../scoring';
 
 interface Props {
   targetWord: string;
@@ -7,6 +9,8 @@ interface Props {
   isSolved: boolean;
   misses?: number;
   backtracks?: number;
+  scoreResult?: ScoreResult | null;
+  scorePending?: boolean;
 }
 
 export const WordDisplay: React.FC<Props> = ({
@@ -15,6 +19,8 @@ export const WordDisplay: React.FC<Props> = ({
   isSolved,
   misses = 0,
   backtracks = 0,
+  scoreResult = null,
+  scorePending = false,
 }) => {
   return (
     <View style={styles.container}>
@@ -55,6 +61,14 @@ export const WordDisplay: React.FC<Props> = ({
           </Text>
           <View style={styles.statsRow}>
             <View style={styles.statChip}>
+              <Text style={styles.statValue}>
+                {scorePending && scoreResult == null
+                  ? '…'
+                  : formatScore(scoreResult?.score)}
+              </Text>
+              <Text style={styles.statLabel}>Score</Text>
+            </View>
+            <View style={styles.statChip}>
               <Text style={styles.statValue}>{misses}</Text>
               <Text style={styles.statLabel}>Misses</Text>
             </View>
@@ -63,6 +77,13 @@ export const WordDisplay: React.FC<Props> = ({
               <Text style={styles.statLabel}>Backtracks</Text>
             </View>
           </View>
+          {scoreResult?.solved ? (
+            <Text style={styles.scoreBreakdown}>
+              {formatScore(scoreResult.base_points)} base −{' '}
+              {formatScore(scoreResult.miss_penalty)} misses −{' '}
+              {formatScore(scoreResult.backtrack_penalty)} backtracks
+            </Text>
+          ) : null}
         </View>
       )}
     </View>
@@ -168,15 +189,17 @@ const styles = StyleSheet.create({
   },
   statsRow: {
     flexDirection: 'row',
-    gap: 12,
+    flexWrap: 'wrap',
+    justifyContent: 'center',
+    gap: 8,
     marginTop: 12,
   },
   statChip: {
     backgroundColor: 'rgba(255,255,255,0.18)',
     borderRadius: 10,
     paddingVertical: 8,
-    paddingHorizontal: 16,
-    minWidth: 100,
+    paddingHorizontal: 12,
+    minWidth: 88,
     alignItems: 'center',
   },
   statValue: {
@@ -191,5 +214,12 @@ const styles = StyleSheet.create({
     letterSpacing: 0.6,
     marginTop: 2,
     textTransform: 'uppercase',
+  },
+  scoreBreakdown: {
+    color: '#ecfdf5',
+    fontSize: 11,
+    fontWeight: '600',
+    marginTop: 10,
+    textAlign: 'center',
   },
 });

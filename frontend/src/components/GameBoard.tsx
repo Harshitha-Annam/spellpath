@@ -158,6 +158,10 @@ export const GameBoard: React.FC<Props> = ({
       ) {
         return false;
       }
+      const isLastMilestone = collected === milestones.length - 1;
+      if (isLastMilestone && current.length + 1 !== gridSize * gridSize) {
+        return false;
+      }
     }
     return true;
   };
@@ -182,10 +186,6 @@ export const GameBoard: React.FC<Props> = ({
   /** Only enter the cell under the finger — never chase distant cells. */
   const tryEnterCell = (target: GridPos) => {
     if (lockedRef.current) {
-      return;
-    }
-    // Full board = solved; freeze path (no further draw or undo).
-    if (pathRef.current.length >= gridSize * gridSize) {
       return;
     }
 
@@ -220,6 +220,10 @@ export const GameBoard: React.FC<Props> = ({
       pathRef.current = next;
       visitedRef.current.delete(cellKey(removed));
       scheduleCommit(next);
+      return;
+    }
+
+    if (current.length >= gridSize * gridSize) {
       return;
     }
 

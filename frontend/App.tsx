@@ -9,18 +9,22 @@ import {
   useColorScheme,
   View,
 } from 'react-native';
-import { Difficulty, PuzzleData, GridPos } from './src/types';
-import { fetchGeneratedPuzzle } from './src/api';
+import { AppMode, Difficulty, PuzzleData, GridPos, ScoreResult } from './src/types';
+import { fetchGeneratedPuzzle, scorePuzzleSolve } from './src/api';
 import { generatePuzzle } from './src/puzzleGenerator';
 import {
   loadPuzzleStats,
   resetPuzzleStats,
   savePuzzleStats,
   PuzzleRunStats,
+  loadSessionScore,
+  awardPuzzleScore,
 } from './src/puzzleStatsStorage';
+import { isSuccessfulSolve, scoreLocalSolve } from './src/scoring';
 import { HeaderControls } from './src/components/HeaderControls';
 import { WordDisplay } from './src/components/WordDisplay';
 import { GameBoard } from './src/components/GameBoard';
+import { DuelScreen } from './src/DuelScreen';
 
 const EMPTY_STATS: PuzzleRunStats = {
   puzzleId: '',
@@ -30,6 +34,7 @@ const EMPTY_STATS: PuzzleRunStats = {
 
 export default function App() {
   const isDarkMode = useColorScheme() === 'dark';
+  const [mode, setMode] = useState<AppMode>('solo');
 
   const [difficulty, setDifficulty] = useState<Difficulty>('easy');
   const [puzzle, setPuzzle] = useState<PuzzleData>(() => generatePuzzle('easy'));
@@ -39,14 +44,34 @@ export default function App() {
   const [showingSolution, setShowingSolution] = useState(false);
   const [boardDragging, setBoardDragging] = useState(false);
   const [runStats, setRunStats] = useState<PuzzleRunStats>(EMPTY_STATS);
+  const [sessionScore, setSessionScore] = useState(0);
+  const [puzzleScore, setPuzzleScore] = useState<ScoreResult | null>(null);
+  const [scorePending, setScorePending] = useState(false);
   const statsRef = useRef<PuzzleRunStats>(EMPTY_STATS);
+  const scoredPuzzleIdsRef = useRef<Set<string>>(new Set());
+  const scoreCacheRef = useRef<Map<string, ScoreResult>>(new Map());
   const didSeedPath = useRef(false);
   const abortRef = useRef<AbortController | null>(null);
+  const scoreAbortRef = useRef<AbortController | null>(null);
 
   // Cancel any in-flight generate if the screen unmounts.
   useEffect(() => {
     return () => {
       abortRef.current?.abort();
+      scoreAbortRef.current?.abort();
+    };
+  }, []);
+
+  useEffect(() => {
+    let cancelled = false;
+    void (async () => {
+      const total = await loadSessionScore();
+      if (!cancelled) {
+        setSessionScore(total);
+      }
+    })();
+    return () => {
+      cancelled = true;
     };
   }, []);
 
@@ -54,6 +79,8 @@ export default function App() {
     const fresh = await resetPuzzleStats(newPuzzle.id);
     statsRef.current = fresh;
     setRunStats(fresh);
+    setPuzzleScore(scoreCacheRef.current.get(newPuzzle.id) ?? null);
+    setScorePending(false);
   }, []);
 
   // Seed path + stats for the initial local puzzle (no API on launch).
@@ -226,9 +253,71 @@ export default function App() {
   }, [puzzle, path]);
 
   const isSolved =
-    !!puzzle &&
-    currentWord === puzzle.targetWord &&
-    path.length === puzzle.gridSize * puzzle.gridSize;
+    !!puzzle && !showingSolution && isSuccessfulSolve(puzzle, path);
+
+  useEffect(() => {
+    if (!isSolved || !puzzle) {
+      return;
+    }
+
+    const cached = scoreCacheRef.current.get(puzzle.id);
+    if (cached) {
+      setPuzzleScore(cached);
+      setScorePending(false);
+      return;
+    }
+    if (scoredPuzzleIdsRef.current.has(puzzle.id)) {
+      return;
+    }
+
+    scoredPuzzleIdsRef.current.add(puzzle.id);
+    const controller = new AbortController();
+    scoreAbortRef.current = controller;
+    setScorePending(true);
+
+    const stats = statsRef.current;
+    const misses = stats.puzzleId === puzzle.id ? stats.misses : 0;
+    const backtracks = stats.puzzleId === puzzle.id ? stats.backtracks : 0;
+
+    void (async () => {
+      try {
+        let result: ScoreResult;
+        try {
+          result = await scorePuzzleSolve(
+            { puzzle, path, misses, backtracks },
+            controller.signal,
+          );
+        } catch (err) {
+          if (
+            controller.signal.aborted ||
+            (err instanceof Error && err.name === 'AbortError')
+          ) {
+            scoredPuzzleIdsRef.current.delete(puzzle.id);
+            return;
+          }
+          result = scoreLocalSolve(puzzle, path, misses, backtracks);
+        }
+
+        if (controller.signal.aborted) {
+          scoredPuzzleIdsRef.current.delete(puzzle.id);
+          return;
+        }
+
+        scoreCacheRef.current.set(puzzle.id, result);
+        setPuzzleScore(result);
+        if (result.solved && typeof result.score === 'number') {
+          const total = await awardPuzzleScore(puzzle.id, result.score);
+          if (!controller.signal.aborted) {
+            setSessionScore(total);
+          }
+        }
+      } finally {
+        if (!controller.signal.aborted) {
+          setScorePending(false);
+        }
+      }
+    })();
+  }, [isSolved, puzzle, path]);
 
   return (
     <SafeAreaView style={styles.safeArea}>
@@ -243,52 +332,65 @@ export default function App() {
         bounces
         showsVerticalScrollIndicator
       >
-        <HeaderControls
-          selectedDifficulty={difficulty}
-          onSelectDifficulty={handleSelectDifficulty}
-          onGenerate={handleGenerate}
-          onReset={handleReset}
-          onShowSolution={handleShowSolution}
-          showingSolution={showingSolution}
-          isGenerating={isGenerating}
-        />
-
-        {error ? <Text style={styles.errorText}>{error}</Text> : null}
-
-        {puzzle ? (
-          <View style={styles.gameArea}>
-            <WordDisplay
-              targetWord={puzzle.targetWord}
-              currentWord={currentWord}
-              isSolved={isSolved}
-              misses={runStats.misses}
-              backtracks={runStats.backtracks}
+        {mode === 'duel' ? (
+          <DuelScreen
+            onBackToSolo={() => setMode('solo')}
+            onBoardDragChange={setBoardDragging}
+          />
+        ) : (
+          <>
+            <HeaderControls
+              selectedDifficulty={difficulty}
+              onSelectDifficulty={handleSelectDifficulty}
+              onGenerate={handleGenerate}
+              onReset={handleReset}
+              onShowSolution={handleShowSolution}
+              showingSolution={showingSolution}
+              isGenerating={isGenerating}
+              sessionScore={sessionScore}
+              onOpenDuel={() => setMode('duel')}
             />
 
-            <View style={styles.boardSection}>
-              <GameBoard
-                key={puzzle.id}
-                puzzle={puzzle}
-                path={path}
-                onPathChange={handlePathChange}
-                onDragChange={setBoardDragging}
-                onMiss={handleMiss}
-                onBacktrack={handleBacktrack}
-                interactionLocked={isSolved}
-              />
-              {isGenerating ? (
-                <View style={styles.loadingOverlay} pointerEvents="none">
-                  <ActivityIndicator size="large" color="#4f46e5" />
-                  <Text style={styles.loadingText}>Generating puzzle…</Text>
+            {error ? <Text style={styles.errorText}>{error}</Text> : null}
+
+            {puzzle ? (
+              <View style={styles.gameArea}>
+                <WordDisplay
+                  targetWord={puzzle.targetWord}
+                  currentWord={currentWord}
+                  isSolved={isSolved}
+                  misses={runStats.misses}
+                  backtracks={runStats.backtracks}
+                  scoreResult={puzzleScore}
+                  scorePending={scorePending}
+                />
+
+                <View style={styles.boardSection}>
+                  <GameBoard
+                    key={puzzle.id}
+                    puzzle={puzzle}
+                    path={path}
+                    onPathChange={handlePathChange}
+                    onDragChange={setBoardDragging}
+                    onMiss={handleMiss}
+                    onBacktrack={handleBacktrack}
+                    interactionLocked={isSolved || showingSolution}
+                  />
+                  {isGenerating ? (
+                    <View style={styles.loadingOverlay} pointerEvents="none">
+                      <ActivityIndicator size="large" color="#4f46e5" />
+                      <Text style={styles.loadingText}>Generating puzzle…</Text>
+                    </View>
+                  ) : null}
                 </View>
-              ) : null}
-            </View>
-          </View>
-        ) : (
-          <View style={styles.initialLoading}>
-            <ActivityIndicator size="large" color="#4f46e5" />
-            <Text style={styles.loadingText}>Generating puzzle…</Text>
-          </View>
+              </View>
+            ) : (
+              <View style={styles.initialLoading}>
+                <ActivityIndicator size="large" color="#4f46e5" />
+                <Text style={styles.loadingText}>Generating puzzle…</Text>
+              </View>
+            )}
+          </>
         )}
       </ScrollView>
     </SafeAreaView>

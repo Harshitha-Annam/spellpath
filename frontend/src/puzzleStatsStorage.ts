@@ -100,3 +100,66 @@ export async function clearPuzzleStats(): Promise<void> {
     // no-op
   }
 }
+
+const SESSION_SCORE_KEY = 'spellpath_session_score';
+const AWARDED_SCORES_KEY = 'spellpath_awarded_puzzle_scores';
+
+export async function loadSessionScore(): Promise<number> {
+  try {
+    const raw = await storage.getItem(SESSION_SCORE_KEY);
+    if (!raw) {
+      return 0;
+    }
+    const parsed = Number(raw);
+    return Number.isFinite(parsed) ? parsed : 0;
+  } catch {
+    return 0;
+  }
+}
+
+export async function saveSessionScore(total: number): Promise<void> {
+  try {
+    await storage.setItem(SESSION_SCORE_KEY, String(total));
+  } catch {
+    // Ignore storage failures — in-memory total still works for the session.
+  }
+}
+
+async function loadAwardedScores(): Promise<Record<string, number>> {
+  try {
+    const raw = await storage.getItem(AWARDED_SCORES_KEY);
+    if (!raw) {
+      return {};
+    }
+    const parsed = JSON.parse(raw) as Record<string, number>;
+    return parsed && typeof parsed === 'object' ? parsed : {};
+  } catch {
+    return {};
+  }
+}
+
+/** Add a puzzle score once. Repeat awards for the same puzzle are ignored. */
+export async function awardPuzzleScore(
+  puzzleId: string,
+  score: number,
+): Promise<number> {
+  const awarded = await loadAwardedScores();
+  if (Object.prototype.hasOwnProperty.call(awarded, puzzleId)) {
+    return loadSessionScore();
+  }
+  awarded[puzzleId] = score;
+  try {
+    await storage.setItem(AWARDED_SCORES_KEY, JSON.stringify(awarded));
+  } catch {
+    // still update the running total for this session
+  }
+  return addSessionScore(score);
+}
+
+/** Add a puzzle score to the running total (may go below zero). */
+export async function addSessionScore(delta: number): Promise<number> {
+  const current = await loadSessionScore();
+  const next = Math.round((current + delta) * 100) / 100;
+  await saveSessionScore(next);
+  return next;
+}
