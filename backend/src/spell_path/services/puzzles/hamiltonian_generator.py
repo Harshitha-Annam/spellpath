@@ -1,4 +1,9 @@
 """
+Legacy standalone Hamiltonian path puzzle generator (not used by the API).
+
+The live /build-puzzle pipeline uses services/puzzles/engine/ instead.
+Kept for reference and offline experimentation.
+
 Hamiltonian path puzzle generator using the backbite Monte Carlo method
 (Oberdorf, Ferguson, Jacobsen & Kondev / Clisby).
 

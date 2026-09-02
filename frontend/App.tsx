@@ -1,7 +1,7 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   ActivityIndicator,
-  SafeAreaView,
+  Platform,
   ScrollView,
   StatusBar,
   StyleSheet,
@@ -9,8 +9,9 @@ import {
   useColorScheme,
   View,
 } from 'react-native';
+import { SafeAreaView, useSafeAreaInsets } from 'react-native-safe-area-context';
 import { AppMode, Difficulty, PuzzleData, GridPos, ScoreResult } from './src/types';
-import { fetchGeneratedPuzzle, scorePuzzleSolve } from './src/api';
+import { fetchGeneratedPuzzle, fetchBuiltPuzzle, scorePuzzleSolve, ensureCustomApiBaseLoaded } from './src/api';
 import { generatePuzzle } from './src/puzzleGenerator';
 import {
   loadPuzzleStats,
@@ -19,12 +20,14 @@ import {
   PuzzleRunStats,
   loadSessionScore,
   awardPuzzleScore,
+  revokePuzzleScoreAward,
 } from './src/puzzleStatsStorage';
 import { isSuccessfulSolve, scoreLocalSolve } from './src/scoring';
 import { HeaderControls } from './src/components/HeaderControls';
 import { WordDisplay } from './src/components/WordDisplay';
 import { GameBoard } from './src/components/GameBoard';
 import { DuelScreen } from './src/DuelScreen';
+import { LiveDuelScreen } from './src/screens/duel/LiveDuelScreen';
 
 const EMPTY_STATS: PuzzleRunStats = {
   puzzleId: '',
@@ -34,19 +37,34 @@ const EMPTY_STATS: PuzzleRunStats = {
 
 export default function App() {
   const isDarkMode = useColorScheme() === 'dark';
+  const insets = useSafeAreaInsets();
   const [mode, setMode] = useState<AppMode>('solo');
 
   const [difficulty, setDifficulty] = useState<Difficulty>('easy');
   const [puzzle, setPuzzle] = useState<PuzzleData>(() => generatePuzzle('easy'));
   const [path, setPath] = useState<GridPos[]>([{ row: 0, col: 0 }]);
   const [isGenerating, setIsGenerating] = useState(false);
+  const [isBuilding, setIsBuilding] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [showingSolution, setShowingSolution] = useState(false);
   const [boardDragging, setBoardDragging] = useState(false);
+  const scrollRef = useRef<ScrollView>(null);
   const [runStats, setRunStats] = useState<PuzzleRunStats>(EMPTY_STATS);
   const [sessionScore, setSessionScore] = useState(0);
   const [puzzleScore, setPuzzleScore] = useState<ScoreResult | null>(null);
   const [scorePending, setScorePending] = useState(false);
+  const handleBoardDragChange = useCallback((dragging: boolean) => {
+    setBoardDragging(dragging);
+    // setState is async; disable scroll immediately so upward board drags
+    // don't trigger ScrollView bounce/overscroll before the next render.
+    scrollRef.current?.setNativeProps({
+      scrollEnabled: !dragging,
+      ...(Platform.OS === 'android'
+        ? { overScrollMode: dragging ? 'never' : 'auto' }
+        : { bounces: !dragging }),
+    });
+  }, []);
+
   const statsRef = useRef<PuzzleRunStats>(EMPTY_STATS);
   const scoredPuzzleIdsRef = useRef<Set<string>>(new Set());
   const scoreCacheRef = useRef<Map<string, ScoreResult>>(new Map());
@@ -63,6 +81,10 @@ export default function App() {
   }, []);
 
   useEffect(() => {
+    void ensureCustomApiBaseLoaded();
+  }, []);
+
+  useEffect(() => {
     let cancelled = false;
     void (async () => {
       const total = await loadSessionScore();
@@ -76,11 +98,18 @@ export default function App() {
   }, []);
 
   const beginPuzzleRun = useCallback(async (newPuzzle: PuzzleData) => {
+    scoreAbortRef.current?.abort();
+    scoreCacheRef.current.delete(newPuzzle.id);
+    scoredPuzzleIdsRef.current.delete(newPuzzle.id);
+
     const fresh = await resetPuzzleStats(newPuzzle.id);
     statsRef.current = fresh;
     setRunStats(fresh);
-    setPuzzleScore(scoreCacheRef.current.get(newPuzzle.id) ?? null);
+    setPuzzleScore(null);
     setScorePending(false);
+
+    const total = await revokePuzzleScoreAward(newPuzzle.id);
+    setSessionScore(total);
   }, []);
 
   // Seed path + stats for the initial local puzzle (no API on launch).
@@ -169,6 +198,50 @@ export default function App() {
     [applyPuzzle],
   );
 
+  const loadBuiltPuzzle = useCallback(
+    async (diff: Difficulty) => {
+      abortRef.current?.abort();
+      const controller = new AbortController();
+      abortRef.current = controller;
+
+      setIsBuilding(true);
+      setError(null);
+
+      try {
+        const newPuzzle = await fetchBuiltPuzzle(diff, controller.signal);
+        if (controller.signal.aborted) {
+          return;
+        }
+        applyPuzzle(newPuzzle);
+      } catch (err) {
+        if (
+          controller.signal.aborted ||
+          (err instanceof Error && err.name === 'AbortError')
+        ) {
+          return;
+        }
+        const fallback = generatePuzzle(diff);
+        applyPuzzle(fallback);
+
+        const message =
+          err instanceof Error ? err.message : 'Could not build a puzzle';
+        const isNetwork =
+          message === 'Network request failed' ||
+          message.includes('Failed to fetch');
+        setError(
+          isNetwork
+            ? 'Could not reach the puzzle server — showing a local puzzle. Start the backend on port 8000 (`uvicorn main:app --reload --host 0.0.0.0`).'
+            : message,
+        );
+      } finally {
+        if (!controller.signal.aborted) {
+          setIsBuilding(false);
+        }
+      }
+    },
+    [applyPuzzle],
+  );
+
   // Hydrate stats if secure storage already has values for this puzzle id
   // (e.g. after a fast refresh mid-run). New puzzles go through beginPuzzleRun.
   useEffect(() => {
@@ -197,6 +270,10 @@ export default function App() {
 
   const handleGenerate = () => {
     void loadPuzzle(difficulty);
+  };
+
+  const handleBuild = () => {
+    void loadBuiltPuzzle(difficulty);
   };
 
   const handleReset = () => {
@@ -319,80 +396,105 @@ export default function App() {
     })();
   }, [isSolved, puzzle, path]);
 
+  const bottomPad = Math.max(insets.bottom, 16) + 16;
+
+  const soloContent = (
+    <>
+      <HeaderControls
+        selectedDifficulty={difficulty}
+        onSelectDifficulty={handleSelectDifficulty}
+        onGenerate={handleGenerate}
+        onBuild={handleBuild}
+        onReset={handleReset}
+        onShowSolution={handleShowSolution}
+        showingSolution={showingSolution}
+        isGenerating={isGenerating}
+        isBuilding={isBuilding}
+        sessionScore={sessionScore}
+        onOpenDuel={() => setMode('duel')}
+        onOpenLiveDuel={() => setMode('liveDuel')}
+      />
+
+      {error ? <Text style={styles.errorText}>{error}</Text> : null}
+
+      {puzzle ? (
+        <View style={styles.gameArea}>
+          <WordDisplay
+            targetWord={puzzle.targetWord}
+            currentWord={currentWord}
+            isSolved={isSolved}
+            misses={runStats.misses}
+            backtracks={runStats.backtracks}
+            scoreResult={puzzleScore}
+            scorePending={scorePending}
+          />
+
+          <View style={styles.boardSection}>
+            <GameBoard
+              key={puzzle.id}
+              puzzle={puzzle}
+              path={path}
+              onPathChange={handlePathChange}
+              onDragChange={handleBoardDragChange}
+              onMiss={handleMiss}
+              onBacktrack={handleBacktrack}
+              interactionLocked={isSolved || showingSolution}
+            />
+            {(isGenerating || isBuilding) ? (
+              <View style={styles.loadingOverlay} pointerEvents="none">
+                <ActivityIndicator size="large" color="#4f46e5" />
+                <Text style={styles.loadingText}>
+                  {isBuilding ? 'Building puzzle…' : 'Generating puzzle…'}
+                </Text>
+              </View>
+            ) : null}
+          </View>
+        </View>
+      ) : (
+        <View style={styles.initialLoading}>
+          <ActivityIndicator size="large" color="#4f46e5" />
+          <Text style={styles.loadingText}>Generating puzzle…</Text>
+        </View>
+      )}
+    </>
+  );
+
   return (
-    <SafeAreaView style={styles.safeArea}>
+    <SafeAreaView style={styles.safeArea} edges={['top', 'left', 'right']}>
       <StatusBar barStyle={isDarkMode ? 'light-content' : 'dark-content'} />
-      <ScrollView
-        style={styles.screen}
-        contentContainerStyle={styles.scrollContent}
-        keyboardShouldPersistTaps="handled"
-        // Disable scroll while drawing so ScrollView doesn't steal the gesture.
-        scrollEnabled={!boardDragging}
-        nestedScrollEnabled
-        bounces
-        showsVerticalScrollIndicator
-      >
-        {mode === 'duel' ? (
+      {mode === 'liveDuel' ? (
+        <View style={[styles.screen, { paddingBottom: bottomPad }]}>
+          <LiveDuelScreen
+            onBackToSolo={() => setMode('solo')}
+            onBoardDragChange={handleBoardDragChange}
+          />
+        </View>
+      ) : mode === 'duel' ? (
+        <View style={[styles.screen, { paddingBottom: bottomPad }]}>
           <DuelScreen
             onBackToSolo={() => setMode('solo')}
-            onBoardDragChange={setBoardDragging}
+            onBoardDragChange={handleBoardDragChange}
           />
-        ) : (
-          <>
-            <HeaderControls
-              selectedDifficulty={difficulty}
-              onSelectDifficulty={handleSelectDifficulty}
-              onGenerate={handleGenerate}
-              onReset={handleReset}
-              onShowSolution={handleShowSolution}
-              showingSolution={showingSolution}
-              isGenerating={isGenerating}
-              sessionScore={sessionScore}
-              onOpenDuel={() => setMode('duel')}
-            />
-
-            {error ? <Text style={styles.errorText}>{error}</Text> : null}
-
-            {puzzle ? (
-              <View style={styles.gameArea}>
-                <WordDisplay
-                  targetWord={puzzle.targetWord}
-                  currentWord={currentWord}
-                  isSolved={isSolved}
-                  misses={runStats.misses}
-                  backtracks={runStats.backtracks}
-                  scoreResult={puzzleScore}
-                  scorePending={scorePending}
-                />
-
-                <View style={styles.boardSection}>
-                  <GameBoard
-                    key={puzzle.id}
-                    puzzle={puzzle}
-                    path={path}
-                    onPathChange={handlePathChange}
-                    onDragChange={setBoardDragging}
-                    onMiss={handleMiss}
-                    onBacktrack={handleBacktrack}
-                    interactionLocked={isSolved || showingSolution}
-                  />
-                  {isGenerating ? (
-                    <View style={styles.loadingOverlay} pointerEvents="none">
-                      <ActivityIndicator size="large" color="#4f46e5" />
-                      <Text style={styles.loadingText}>Generating puzzle…</Text>
-                    </View>
-                  ) : null}
-                </View>
-              </View>
-            ) : (
-              <View style={styles.initialLoading}>
-                <ActivityIndicator size="large" color="#4f46e5" />
-                <Text style={styles.loadingText}>Generating puzzle…</Text>
-              </View>
-            )}
-          </>
-        )}
-      </ScrollView>
+        </View>
+      ) : (
+        <ScrollView
+          ref={scrollRef}
+          style={styles.screen}
+          contentContainerStyle={[
+            styles.scrollContent,
+            { paddingBottom: bottomPad },
+          ]}
+          keyboardShouldPersistTaps="handled"
+          // Disable scroll while drawing so ScrollView doesn't steal the gesture.
+          scrollEnabled={!boardDragging}
+          nestedScrollEnabled
+          bounces={!boardDragging}
+          overScrollMode={boardDragging ? 'never' : 'auto'}
+          showsVerticalScrollIndicator
+        >
+          {soloContent}
+        </ScrollView>
+      )}
     </SafeAreaView>
   );
 }
@@ -407,7 +509,6 @@ const styles = StyleSheet.create({
   },
   scrollContent: {
     flexGrow: 1,
-    paddingBottom: 32,
   },
   gameArea: {
     alignItems: 'center',

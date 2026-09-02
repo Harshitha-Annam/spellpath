@@ -12,7 +12,8 @@ from dotenv import load_dotenv
 from langchain_core.messages import SystemMessage, HumanMessage
 from langchain_deepseek import ChatDeepSeek
 
-_BACKEND_DIR = Path(__file__).resolve().parent
+_SPELL_PATH_DIR = Path(__file__).resolve().parents[2]
+_BACKEND_DIR = Path(__file__).resolve().parents[4]
 load_dotenv(_BACKEND_DIR / ".env")
 
 logger = logging.getLogger("puzzle_logic")
@@ -21,7 +22,7 @@ DEFAULT_DEEPSEEK_MODEL = "deepseek-v4-pro"
 
 
 def _load_system_prompt() -> str:
-    prompt_path = _BACKEND_DIR / "system_prompt.txt"
+    prompt_path = _SPELL_PATH_DIR / "prompts" / "system_prompt.txt"
     try:
         return prompt_path.read_text(encoding="utf-8").strip()
     except FileNotFoundError as e:

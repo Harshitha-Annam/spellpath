@@ -24,7 +24,7 @@ export const DuelProgress: React.FC<Props> = ({
     <View style={styles.wrap}>
       <View style={styles.topRow}>
         <View>
-          <Text style={styles.label}>DUEL SCORE</Text>
+          <Text style={styles.label}>SPELLPATH COMBAT SCORE</Text>
           <Text style={styles.value}>{attempt.total_score.toFixed(2)}</Text>
         </View>
         <View style={styles.rightMeta}>

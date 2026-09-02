@@ -3,7 +3,8 @@
   "version": "0.0.1",
   "private": true,
   "scripts": {
-    "android": "react-native run-android",
+    "android": "adb reverse tcp:8000 tcp:8000 && react-native run-android",
+    "adb:reverse": "adb reverse tcp:8000 tcp:8000",
     "ios": "react-native run-ios",
     "lint": "eslint .",
     "start": "react-native start",

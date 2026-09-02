@@ -19,7 +19,8 @@ from typing import Dict, List, Optional, Tuple
 import httpx
 from dotenv import load_dotenv
 
-_BACKEND_DIR = Path(__file__).resolve().parent
+_SPELL_PATH_DIR = Path(__file__).resolve().parents[2]
+_BACKEND_DIR = Path(__file__).resolve().parents[4]
 load_dotenv(_BACKEND_DIR / ".env")
 
 logger = logging.getLogger("get_puzzle")
@@ -69,7 +70,7 @@ WORD_BANK = {
 
 
 def _load_system_prompt() -> str:
-    path = _BACKEND_DIR / "system_prompt.txt"
+    path = _SPELL_PATH_DIR / "prompts" / "system_prompt.txt"
     try:
         return path.read_text(encoding="utf-8").strip()
     except FileNotFoundError as e:

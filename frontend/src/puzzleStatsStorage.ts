@@ -156,6 +156,24 @@ export async function awardPuzzleScore(
   return addSessionScore(score);
 }
 
+/** Remove a prior award so the puzzle can be scored again after a reset. */
+export async function revokePuzzleScoreAward(
+  puzzleId: string,
+): Promise<number> {
+  const awarded = await loadAwardedScores();
+  if (!Object.prototype.hasOwnProperty.call(awarded, puzzleId)) {
+    return loadSessionScore();
+  }
+  const previous = awarded[puzzleId];
+  delete awarded[puzzleId];
+  try {
+    await storage.setItem(AWARDED_SCORES_KEY, JSON.stringify(awarded));
+  } catch {
+    // still update the running total for this session
+  }
+  return addSessionScore(-previous);
+}
+
 /** Add a puzzle score to the running total (may go below zero). */
 export async function addSessionScore(delta: number): Promise<number> {
   const current = await loadSessionScore();

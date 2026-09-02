@@ -4,6 +4,7 @@
 
 import React from 'react';
 import ReactTestRenderer from 'react-test-renderer';
+import { SafeAreaProvider } from 'react-native-safe-area-context';
 
 jest.mock('react-native-encrypted-storage', () => ({
   __esModule: true,
@@ -43,6 +44,10 @@ beforeEach(() => {
 
 test('renders correctly', async () => {
   await ReactTestRenderer.act(async () => {
-    ReactTestRenderer.create(<App />);
+    ReactTestRenderer.create(
+      <SafeAreaProvider>
+        <App />
+      </SafeAreaProvider>,
+    );
   });
 });

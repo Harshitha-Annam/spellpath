@@ -1,54 +1,76 @@
 import React from 'react';
 import { View, Text, TouchableOpacity, StyleSheet } from 'react-native';
 import { Difficulty } from '../types';
+import { ServerHostButton } from './ServerHostButton';
 
 interface Props {
   selectedDifficulty: Difficulty;
   onSelectDifficulty: (difficulty: Difficulty) => void;
   onGenerate: () => void;
+  onBuild?: () => void;
   onReset: () => void;
   onShowSolution?: () => void;
   showingSolution?: boolean;
   isGenerating?: boolean;
+  isBuilding?: boolean;
   sessionScore?: number;
   onOpenDuel?: () => void;
+  onOpenLiveDuel?: () => void;
 }
 
 export const HeaderControls: React.FC<Props> = ({
   selectedDifficulty,
   onSelectDifficulty,
   onGenerate,
+  onBuild,
   onReset,
   onShowSolution,
   showingSolution = false,
   isGenerating = false,
+  isBuilding = false,
   sessionScore = 0,
   onOpenDuel,
+  onOpenLiveDuel,
 }) => {
-  const difficulties: { key: Difficulty; label: string; gridLabel: string }[] = [
-    { key: 'easy', label: 'Easy', gridLabel: '5x5' },
-    { key: 'medium', label: 'Medium', gridLabel: '7x7' },
-    { key: 'hard', label: 'Hard', gridLabel: '9x9' },
+  const isBusy = isGenerating || isBuilding;
+  const difficulties: { key: Difficulty; label: string }[] = [
+    { key: 'easy', label: 'Easy' },
+    { key: 'medium', label: 'Medium' },
+    { key: 'hard', label: 'Hard' },
   ];
 
   return (
     <View style={styles.headerContainer}>
-      <Text style={styles.title}>Spell Path</Text>
-      <Text style={styles.subtitle}>Connect letters orthogonally to spell the target word!</Text>
+      <View style={styles.titleRow}>
+        <View style={styles.titleSpacer} />
+        <Text style={styles.title}>Spell Path</Text>
+        <View style={styles.titleActions}>
+          <ServerHostButton disabled={isBusy} />
+        </View>
+      </View>
       <View style={styles.scoreChip}>
         <Text style={styles.scoreLabel}>TOTAL SCORE</Text>
         <Text style={styles.scoreValue}>{sessionScore.toFixed(2)}</Text>
       </View>
 
+      {onOpenLiveDuel ? (
+        <TouchableOpacity
+          activeOpacity={0.85}
+          style={styles.liveDuelBtn}
+          onPress={onOpenLiveDuel}
+          disabled={isBusy}
+        >
+          <Text style={styles.liveDuelBtnText}>⚡ Live Duel</Text>
+        </TouchableOpacity>
+      ) : null}
       {onOpenDuel ? (
         <TouchableOpacity
           activeOpacity={0.85}
           style={styles.duelBtn}
           onPress={onOpenDuel}
-          disabled={isGenerating}
+          disabled={isBusy}
         >
-          <Text style={styles.duelBtnText}>⚔️ Async Duel</Text>
-          <Text style={styles.duelBtnSub}>6-puzzle challenge · beat a friend's record</Text>
+          <Text style={styles.duelBtnText}>⚔️ Spellpath Combat</Text>
         </TouchableOpacity>
       ) : null}
       <View style={styles.difficultyRow}>
@@ -58,12 +80,12 @@ export const HeaderControls: React.FC<Props> = ({
             <TouchableOpacity
               key={diff.key}
               activeOpacity={0.8}
-              disabled={isGenerating}
+              disabled={isBusy}
               onPress={() => onSelectDifficulty(diff.key)}
               style={[
                 styles.difficultyButton,
                 isSelected && styles.difficultyButtonActive,
-                isGenerating && styles.disabledBtn,
+                isBusy && styles.disabledBtn,
               ]}
             >
               <Text
@@ -74,65 +96,78 @@ export const HeaderControls: React.FC<Props> = ({
               >
                 {diff.label}
               </Text>
-              <Text
-                style={[
-                  styles.difficultySubText,
-                  isSelected && styles.difficultySubTextActive,
-                ]}
-              >
-                {diff.gridLabel}
-              </Text>
             </TouchableOpacity>
           );
         })}
       </View>
 
       {/* Control Buttons */}
-      <View style={styles.actionRow}>
-        <TouchableOpacity
-          activeOpacity={0.8}
-          disabled={isGenerating}
-          style={[
-            styles.actionBtn,
-            styles.generateBtn,
-            isGenerating && styles.disabledBtn,
-          ]}
-          onPress={onGenerate}
-        >
-          <Text style={styles.generateBtnText}>
-            {isGenerating ? 'Generating…' : '✨ Generate Puzzle'}
-          </Text>
-        </TouchableOpacity>
-
-        <TouchableOpacity
-          activeOpacity={0.8}
-          style={[styles.actionBtn, styles.resetBtn]}
-          onPress={onReset}
-        >
-          <Text style={styles.resetBtnText}>🔄 Reset Board</Text>
-        </TouchableOpacity>
-      </View>
-
-      {onShowSolution ? (
-        <TouchableOpacity
-          activeOpacity={0.8}
-          style={[
-            styles.actionBtn,
-            styles.solutionBtn,
-            showingSolution && styles.solutionBtnActive,
-          ]}
-          onPress={onShowSolution}
-        >
-          <Text
+      <View style={styles.actionColumn}>
+        <View style={styles.actionRow}>
+          <TouchableOpacity
+            activeOpacity={0.8}
+            disabled={isBusy}
             style={[
-              styles.solutionBtnText,
-              showingSolution && styles.solutionBtnTextActive,
+              styles.actionBtn,
+              styles.generateBtn,
+              isBusy && styles.disabledBtn,
             ]}
+            onPress={onGenerate}
           >
-            {showingSolution ? '🙈 Hide Solution' : '🧭 Show Solution'}
-          </Text>
-        </TouchableOpacity>
-      ) : null}
+            <Text style={styles.generateBtnText}>
+              {isGenerating ? 'Generating…' : '✨ Generate Puzzle'}
+            </Text>
+          </TouchableOpacity>
+
+          {onBuild ? (
+            <TouchableOpacity
+              activeOpacity={0.8}
+              disabled={isBusy}
+              style={[
+                styles.actionBtn,
+                styles.buildBtn,
+                isBusy && styles.disabledBtn,
+              ]}
+              onPress={onBuild}
+            >
+              <Text style={styles.buildBtnText}>
+                {isBuilding ? 'Building…' : '🧩 Build Puzzle'}
+              </Text>
+            </TouchableOpacity>
+          ) : null}
+        </View>
+
+        <View style={styles.actionRow}>
+          <TouchableOpacity
+            activeOpacity={0.8}
+            style={[styles.actionBtn, styles.resetBtn]}
+            onPress={onReset}
+          >
+            <Text style={styles.resetBtnText}>🔄 Reset Board</Text>
+          </TouchableOpacity>
+
+          {onShowSolution ? (
+            <TouchableOpacity
+              activeOpacity={0.8}
+              style={[
+                styles.actionBtn,
+                styles.solutionBtn,
+                showingSolution && styles.solutionBtnActive,
+              ]}
+              onPress={onShowSolution}
+            >
+              <Text
+                style={[
+                  styles.solutionBtnText,
+                  showingSolution && styles.solutionBtnTextActive,
+                ]}
+              >
+                {showingSolution ? '🙈 Hide Solution' : '🧭 Show Solution'}
+              </Text>
+            </TouchableOpacity>
+          ) : null}
+        </View>
+      </View>
     </View>
   );
 };
@@ -141,7 +176,7 @@ const styles = StyleSheet.create({
   headerContainer: {
     alignItems: 'center',
     paddingHorizontal: 16,
-    paddingTop: 12,
+    paddingTop: 8,
     paddingBottom: 16,
     backgroundColor: '#ffffff',
     borderBottomWidth: 1,
@@ -152,21 +187,31 @@ const styles = StyleSheet.create({
     shadowRadius: 8,
     elevation: 3,
   },
+  titleRow: {
+    width: '100%',
+    maxWidth: 380,
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+  },
+  titleSpacer: {
+    width: 36,
+  },
+  titleActions: {
+    width: 36,
+    alignItems: 'flex-end',
+  },
   title: {
+    flex: 1,
+    textAlign: 'center',
     fontSize: 32,
     fontWeight: '900',
     color: '#1e1b4b',
     letterSpacing: 1.2,
     textTransform: 'uppercase',
   },
-  subtitle: {
-    fontSize: 13,
-    color: '#64748b',
-    marginTop: 2,
-    marginBottom: 10,
-    textAlign: 'center',
-  },
   scoreChip: {
+    marginTop: 8,
     backgroundColor: '#eef2ff',
     borderRadius: 12,
     paddingVertical: 8,
@@ -202,11 +247,20 @@ const styles = StyleSheet.create({
     fontWeight: '900',
     fontSize: 16,
   },
-  duelBtnSub: {
-    marginTop: 2,
-    color: '#ccfbf1',
-    fontWeight: '600',
-    fontSize: 12,
+  liveDuelBtn: {
+    backgroundColor: '#059669',
+    borderRadius: 12,
+    paddingVertical: 12,
+    paddingHorizontal: 20,
+    width: '100%',
+    maxWidth: 380,
+    alignItems: 'center',
+    marginBottom: 8,
+  },
+  liveDuelBtnText: {
+    color: '#ffffff',
+    fontWeight: '900',
+    fontSize: 16,
   },
   difficultyRow: {
     flexDirection: 'row',
@@ -234,20 +288,15 @@ const styles = StyleSheet.create({
   difficultyTextActive: {
     color: '#ffffff',
   },
-  difficultySubText: {
-    fontSize: 10,
-    fontWeight: '500',
-    color: '#94a3b8',
-    marginTop: 1,
-  },
-  difficultySubTextActive: {
-    color: '#e0e7ff',
+  actionColumn: {
+    width: '100%',
+    maxWidth: 380,
+    gap: 10,
   },
   actionRow: {
     flexDirection: 'row',
     gap: 10,
     width: '100%',
-    maxWidth: 380,
   },
   actionBtn: {
     flex: 1,
@@ -264,6 +313,14 @@ const styles = StyleSheet.create({
     fontWeight: '700',
     fontSize: 14,
   },
+  buildBtn: {
+    backgroundColor: '#0d9488',
+  },
+  buildBtnText: {
+    color: '#ffffff',
+    fontWeight: '700',
+    fontSize: 14,
+  },
   resetBtn: {
     backgroundColor: '#f1f5f9',
     borderWidth: 1,
@@ -275,9 +332,6 @@ const styles = StyleSheet.create({
     fontSize: 14,
   },
   solutionBtn: {
-    marginTop: 10,
-    width: '100%',
-    maxWidth: 380,
     backgroundColor: '#fff7ed',
     borderWidth: 1,
     borderColor: '#fdba74',

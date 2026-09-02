@@ -1,5 +1,10 @@
 import { NativeModules, Platform } from 'react-native';
 import {
+  clearCustomApiHost,
+  loadCustomApiHost,
+  saveCustomApiHost,
+} from './serverHostStorage';
+import {
   CellData,
   Difficulty,
   DuelAttempt,
@@ -12,7 +17,16 @@ import {
   PuzzleData,
   ScoreResult,
   Wall,
+  LiveDuelJoinResponse,
+  LiveDuelEndPayload,
+  LiveDuelQueueStatus,
 } from './types';
+
+function createAbortError(): Error {
+  const err = new Error('Aborted');
+  err.name = 'AbortError';
+  return err;
+}
 
 interface ApiMilestone {
   index: number;
@@ -30,7 +44,7 @@ interface ApiPuzzleResponse {
   id?: string;
   difficulty?: Difficulty | string;
   grid_size: number;
-  word: string;
+  word?: string;
   start_cell?: [number, number];
   end_cell?: [number, number];
   milestones: ApiMilestone[];
@@ -42,11 +56,21 @@ interface ApiPuzzleResponse {
 }
 
 /** Dev machine LAN IP — update if your PC IP changes (`ipconfig`). */
-const DEV_LAN_HOST = '192.168.70.22';
+export const DEV_LAN_HOST = '192.168.70.13';
 
-const HEALTH_TIMEOUT_MS = 2500;
+const API_PREFIX = '/api';
+/** Spell Path REST + WebSocket routes under `/api/spellpath`. */
+export const SPELLPATH_API_PREFIX = `${API_PREFIX}/spellpath`;
+
+function spellpathPath(path: string): string {
+  return `${SPELLPATH_API_PREFIX}${path.startsWith('/') ? path : `/${path}`}`;
+}
+
+const HEALTH_TIMEOUT_MS = 5000;
 /** DeepSeek via backend can take several minutes. */
 const GET_PUZZLE_TIMEOUT_MS = 600000;
+/** Procedural engine is local — short timeout. */
+const BUILD_PUZZLE_TIMEOUT_MS = 60000;
 const SCORE_PUZZLE_TIMEOUT_MS = 10000;
 /** General duel API calls (lobby, status, etc.). */
 const DUEL_TIMEOUT_MS = 60000;
@@ -58,6 +82,9 @@ const DUEL_PREPARE_POLL_MS = 40 * 60 * 1000;
 const API_BASE_CACHE_TTL_MS = 10 * 60 * 1000;
 
 let cachedApiBase: { url: string; checkedAt: number } | null = null;
+/** Optional override from the header server-IP control (persisted). */
+let customApiBase: string | null = null;
+let customApiBaseLoaded = false;
 
 function invalidateApiBaseCache(): void {
   cachedApiBase = null;
@@ -67,6 +94,65 @@ function rememberApiBase(url: string): void {
   cachedApiBase = { url, checkedAt: Date.now() };
 }
 
+/** Turn "192.168.x.x", "host:8000", or a full URL into an API base. */
+export function normalizeApiBaseInput(input: string): string | null {
+  let raw = input.trim();
+  if (!raw) {
+    return null;
+  }
+  if (!/^https?:\/\//i.test(raw)) {
+    raw = `http://${raw}`;
+  }
+  try {
+    const url = new URL(raw.replace(/\/+$/, ''));
+    if (!url.hostname) {
+      return null;
+    }
+    if (!url.port) {
+      if (url.protocol === 'http:') {
+        return `http://${url.hostname}:8000`;
+      }
+      return `${url.protocol}//${url.hostname}`;
+    }
+    return `${url.protocol}//${url.hostname}:${url.port}`;
+  } catch {
+    return null;
+  }
+}
+
+export function getCustomApiBase(): string | null {
+  return customApiBase;
+}
+
+export async function ensureCustomApiBaseLoaded(): Promise<string | null> {
+  if (customApiBaseLoaded) {
+    return customApiBase;
+  }
+  const stored = await loadCustomApiHost();
+  customApiBase = stored ? normalizeApiBaseInput(stored) : null;
+  customApiBaseLoaded = true;
+  return customApiBase;
+}
+
+export async function setCustomApiBase(input: string | null): Promise<string | null> {
+  if (!input || !input.trim()) {
+    customApiBase = null;
+    customApiBaseLoaded = true;
+    invalidateApiBaseCache();
+    await clearCustomApiHost();
+    return null;
+  }
+  const normalized = normalizeApiBaseInput(input);
+  if (!normalized) {
+    throw new Error(`Enter a valid IP or URL (e.g. ${DEV_LAN_HOST})`);
+  }
+  customApiBase = normalized;
+  customApiBaseLoaded = true;
+  invalidateApiBaseCache();
+  await saveCustomApiHost(normalized);
+  return normalized;
+}
+
 function getCandidateBaseUrls(): string[] {
   const urls: string[] = [];
   const push = (url: string) => {
@@ -74,6 +160,15 @@ function getCandidateBaseUrls(): string[] {
       urls.push(url);
     }
   };
+
+  // USB dev: `adb reverse tcp:8000 tcp:8000` tunnels the phone's localhost → PC.
+  if (Platform.OS === 'android') {
+    push('http://127.0.0.1:8000');
+  }
+
+  if (customApiBase) {
+    push(customApiBase);
+  }
 
   const sourceCode = NativeModules.SourceCode as { scriptURL?: string } | undefined;
   const scriptURL = sourceCode?.scriptURL;
@@ -90,8 +185,10 @@ function getCandidateBaseUrls(): string[] {
     push('http://10.0.2.2:8000');
   }
 
-  push('http://127.0.0.1:8000');
-  push('http://localhost:8000');
+  if (Platform.OS !== 'android') {
+    push('http://127.0.0.1:8000');
+    push('http://localhost:8000');
+  }
 
   return urls;
 }
@@ -216,7 +313,7 @@ export function mapApiPuzzle(
     id: data.id ?? `puzzle_${difficulty}_${Date.now()}`,
     difficulty,
     gridSize,
-    targetWord: data.word.toUpperCase(),
+    targetWord: (data.word ?? '').toUpperCase(),
     startCell,
     endCell,
     cells,
@@ -256,35 +353,79 @@ async function fetchWithTimeout(
   }
 }
 
+async function probeApiBase(base: string, signal?: AbortSignal): Promise<string> {
+  const response = await fetchWithTimeout(`${base}${API_PREFIX}/health`, signal, HEALTH_TIMEOUT_MS);
+  if (!response.ok) {
+    throw new Error(`HTTP ${response.status}`);
+  }
+  return base;
+}
+
+/** First successful probe wins; rejects when every candidate fails. */
+async function raceApiProbes(
+  candidates: string[],
+  signal?: AbortSignal,
+): Promise<{ base: string; errors: string[] }> {
+  const errors: string[] = [];
+
+  return new Promise((resolve, reject) => {
+    if (candidates.length === 0) {
+      reject({ errors });
+      return;
+    }
+
+    let pending = candidates.length;
+
+    const finishFailure = (base: string, err: unknown) => {
+      const message = err instanceof Error ? err.message : String(err);
+      const timedOut =
+        (err instanceof Error && err.name === 'AbortError') ||
+        message.toLowerCase().includes('timeout') ||
+        message.toLowerCase().includes('timed out');
+      errors.push(`${base} → ${timedOut ? 'timeout' : message}`);
+      pending -= 1;
+      if (pending === 0) {
+        reject({ errors });
+      }
+    };
+
+    for (const base of candidates) {
+      void probeApiBase(base, signal)
+        .then((winner) => resolve({ base: winner, errors }))
+        .catch((err) => {
+          if (signal?.aborted) {
+            reject(err);
+            return;
+          }
+          finishFailure(base, err);
+        });
+    }
+  });
+}
+
 async function resolveLiveApiBase(signal?: AbortSignal): Promise<string> {
+  await ensureCustomApiBaseLoaded();
+
   const now = Date.now();
   if (
     cachedApiBase &&
     now - cachedApiBase.checkedAt < API_BASE_CACHE_TTL_MS
   ) {
     try {
-      const response = await fetchWithTimeout(
-        `${cachedApiBase.url}/`,
-        signal,
-        HEALTH_TIMEOUT_MS,
-      );
-      if (response.ok) {
-        rememberApiBase(cachedApiBase.url);
-        return cachedApiBase.url;
-      }
+      await probeApiBase(cachedApiBase.url, signal);
+      rememberApiBase(cachedApiBase.url);
+      return cachedApiBase.url;
     } catch (err) {
       if (signal?.aborted) {
         throw err instanceof Error
           ? err
-          : new DOMException('Aborted', 'AbortError');
+          : createAbortError();
       }
-      // Fall through and re-scan candidates.
+      invalidateApiBaseCache();
     }
-    invalidateApiBaseCache();
   }
 
   const candidates = getCandidateBaseUrls();
-  // Prefer the last known host even if TTL expired.
   if (cachedApiBase?.url) {
     const idx = candidates.indexOf(cachedApiBase.url);
     if (idx > 0) {
@@ -293,42 +434,61 @@ async function resolveLiveApiBase(signal?: AbortSignal): Promise<string> {
     }
   }
 
+  if (signal?.aborted) {
+    throw createAbortError();
+  }
+
   const errors: string[] = [];
 
-  for (const base of candidates) {
+  try {
+    const result = await raceApiProbes(candidates, signal);
+    rememberApiBase(result.base);
+    return result.base;
+  } catch (err) {
     if (signal?.aborted) {
-      throw new DOMException('Aborted', 'AbortError');
+      throw err instanceof Error ? err : createAbortError();
     }
-    try {
-      const response = await fetchWithTimeout(`${base}/`, signal, HEALTH_TIMEOUT_MS);
-      if (response.ok) {
-        rememberApiBase(base);
-        return base;
+    if (err && typeof err === 'object' && 'errors' in err) {
+      const listed = (err as { errors: string[] }).errors;
+      if (listed.length) {
+        errors.push(...listed);
       }
-      errors.push(`${base} → HTTP ${response.status}`);
-    } catch (err) {
-      if (signal?.aborted) {
-        throw err instanceof Error
-          ? err
-          : new DOMException('Aborted', 'AbortError');
-      }
-      const message = err instanceof Error ? err.message : String(err);
-      const timedOut =
-        (err instanceof Error && err.name === 'AbortError') ||
-        message.toLowerCase().includes('timeout') ||
-        message.toLowerCase().includes('timed out');
-      errors.push(`${base} → ${timedOut ? 'timeout' : message}`);
     }
   }
 
   invalidateApiBaseCache();
   throw new Error(
-    `Could not reach the puzzle server. Tried:\n${errors.join('\n')}`,
+    [
+      'Could not reach the puzzle server.',
+      Platform.OS === 'android'
+        ? 'Phone over USB: run `adb reverse tcp:8000 tcp:8000` then reload the app.'
+        : null,
+      `Wi‑Fi: tap ⚙ and save ${DEV_LAN_HOST}, and allow port 8000 in Windows Firewall.`,
+      'Tried:',
+      ...errors,
+    ]
+      .filter(Boolean)
+      .join('\n'),
   );
 }
 
+/** Test a specific server URL (for the ⚙ settings dialog). */
+export async function testApiConnection(input?: string): Promise<string> {
+  if (input?.trim()) {
+    const base = normalizeApiBaseInput(input);
+    if (!base) {
+      throw new Error(`Enter a valid IP or URL (e.g. ${DEV_LAN_HOST})`);
+    }
+    return probeApiBase(base);
+  }
+
+  await ensureCustomApiBaseLoaded();
+  const result = await raceApiProbes(getCandidateBaseUrls());
+  return result.base;
+}
+
 /**
- * Calls backend `/get-puzzle`, which proxies DeepSeek with system_prompt.txt.
+ * Calls backend `/get-puzzle`, which proxies DeepSeek with prompts/system_prompt.txt.
  */
 export async function fetchGeneratedPuzzle(
   difficulty: Difficulty,
@@ -336,7 +496,7 @@ export async function fetchGeneratedPuzzle(
 ): Promise<PuzzleData> {
   const base = await resolveLiveApiBase(signal);
   const params = new URLSearchParams({ difficulty });
-  const url = `${base}/get-puzzle?${params.toString()}`;
+  const url = `${base}${spellpathPath('/get-puzzle')}?${params.toString()}`;
 
   let response: Response;
   try {
@@ -346,7 +506,7 @@ export async function fetchGeneratedPuzzle(
       if (signal?.aborted) {
         throw err instanceof Error
           ? err
-          : new DOMException('Aborted', 'AbortError');
+          : createAbortError();
       }
       throw new Error(
         `Puzzle generation timed out at ${base}/get-puzzle. The backend may still be waiting on DeepSeek — check the server terminal logs.`,
@@ -374,6 +534,58 @@ export async function fetchGeneratedPuzzle(
   const data = (await response.json()) as ApiPuzzleResponse;
   if (!data?.milestones?.length || typeof data.grid_size !== 'number') {
     throw new Error('Backend /get-puzzle returned an incomplete puzzle object');
+  }
+
+  return mapApiPuzzle(data, difficulty);
+}
+
+/**
+ * Calls backend `/build-puzzle`, which uses the procedural puzzle engine.
+ */
+export async function fetchBuiltPuzzle(
+  difficulty: Difficulty,
+  signal?: AbortSignal,
+): Promise<PuzzleData> {
+  const base = await resolveLiveApiBase(signal);
+  const params = new URLSearchParams({ difficulty });
+  const url = `${base}${spellpathPath('/build-puzzle')}?${params.toString()}`;
+
+  let response: Response;
+  try {
+    response = await fetchWithTimeout(url, signal, BUILD_PUZZLE_TIMEOUT_MS);
+  } catch (err) {
+    if (signal?.aborted || (err instanceof Error && err.name === 'AbortError')) {
+      if (signal?.aborted) {
+        throw err instanceof Error
+          ? err
+          : createAbortError();
+      }
+      throw new Error(
+        `Puzzle build timed out at ${base}/build-puzzle. Check the server terminal logs.`,
+      );
+    }
+    throw err;
+  }
+
+  if (!response.ok) {
+    let detail = `Failed to build puzzle (${response.status})`;
+    try {
+      const body = await response.json();
+      if (body?.detail) {
+        detail =
+          typeof body.detail === 'string'
+            ? body.detail
+            : JSON.stringify(body.detail);
+      }
+    } catch {
+      // keep status message
+    }
+    throw new Error(detail);
+  }
+
+  const data = (await response.json()) as ApiPuzzleResponse;
+  if (!data?.milestones?.length || typeof data.grid_size !== 'number') {
+    throw new Error('Backend /build-puzzle returned an incomplete puzzle object');
   }
 
   return mapApiPuzzle(data, difficulty);
@@ -416,7 +628,7 @@ export async function scorePuzzleSolve(
   signal?: AbortSignal,
 ): Promise<ScoreResult> {
   const base = await resolveLiveApiBase(signal);
-  const url = `${base}/score-puzzle`;
+  const url = `${base}${spellpathPath('/score-puzzle')}`;
 
   let response: Response;
   try {
@@ -429,7 +641,7 @@ export async function scorePuzzleSolve(
     if (signal?.aborted || (err instanceof Error && err.name === 'AbortError')) {
       throw err instanceof Error
         ? err
-        : new DOMException('Aborted', 'AbortError');
+        : createAbortError();
     }
     throw err;
   }
@@ -509,7 +721,7 @@ async function apiJson<T>(
     if (signal?.aborted) {
       throw err instanceof Error
         ? err
-        : new DOMException('Aborted', 'AbortError');
+        : createAbortError();
     }
     if (isTimeoutLikeError(err)) {
       throw new Error(
@@ -545,7 +757,7 @@ async function apiJsonWithRetry<T>(
     // One automatic retry after a brief pause (common after phone Wi‑Fi sleep).
     await new Promise<void>((resolve) => setTimeout(resolve, 600));
     if (signal?.aborted) {
-      throw new DOMException('Aborted', 'AbortError');
+      throw createAbortError();
     }
     return apiJson<T>(path, init, signal, timeoutMs);
   }
@@ -556,7 +768,7 @@ export async function createPlayer(
   signal?: AbortSignal,
 ): Promise<PlayerProfile> {
   return apiJson<PlayerProfile>(
-    '/players',
+    spellpathPath('/players'),
     { method: 'POST', body: JSON.stringify({ name }) },
     signal,
   );
@@ -566,7 +778,7 @@ export async function fetchPlayer(
   playerId: string,
   signal?: AbortSignal,
 ): Promise<PlayerProfile> {
-  return apiJson<PlayerProfile>(`/players/${encodeURIComponent(playerId)}`, undefined, signal);
+  return apiJson<PlayerProfile>(spellpathPath(`/players/${encodeURIComponent(playerId)}`), undefined, signal);
 }
 
 export async function createDuel(
@@ -574,7 +786,7 @@ export async function createDuel(
   signal?: AbortSignal,
 ): Promise<DuelInfo> {
   return apiJson<DuelInfo>(
-    '/duels',
+    spellpathPath('/duels'),
     { method: 'POST', body: JSON.stringify({ player_id: playerId }) },
     signal,
   );
@@ -585,7 +797,7 @@ export async function fetchDuel(
   signal?: AbortSignal,
 ): Promise<DuelInfo> {
   return apiJson<DuelInfo>(
-    `/duels/${encodeURIComponent(idOrCode.trim())}`,
+    spellpathPath(`/duels/${encodeURIComponent(idOrCode.trim())}`),
     undefined,
     signal,
   );
@@ -599,7 +811,7 @@ export async function waitForDuelReady(
   const started = Date.now();
   while (true) {
     if (signal?.aborted) {
-      throw new DOMException('Aborted', 'AbortError');
+      throw createAbortError();
     }
     const duel = await fetchDuel(idOrCode, signal);
     onProgress?.(duel);
@@ -607,11 +819,11 @@ export async function waitForDuelReady(
       return duel;
     }
     if (duel.status === 'failed') {
-      throw new Error(duel.error || 'Duel puzzle pack failed to generate');
+      throw new Error(duel.error || 'Spellpath combat puzzle pack failed to generate');
     }
     if (Date.now() - started > DUEL_PREPARE_POLL_MS) {
       throw new Error(
-        'Timed out waiting for DeepSeek to finish the duel pack. Try again in a bit.',
+        'Timed out waiting for DeepSeek to finish the spellpath combat pack. Try again in a bit.',
       );
     }
     await new Promise<void>((resolve, reject) => {
@@ -620,7 +832,7 @@ export async function waitForDuelReady(
         if (timer) {
           clearTimeout(timer);
         }
-        reject(new DOMException('Aborted', 'AbortError'));
+        reject(createAbortError());
       };
       timer = setTimeout(() => {
         signal?.removeEventListener('abort', onAbort);
@@ -629,7 +841,7 @@ export async function waitForDuelReady(
       if (signal) {
         if (signal.aborted) {
           clearTimeout(timer);
-          reject(new DOMException('Aborted', 'AbortError'));
+          reject(createAbortError());
           return;
         }
         signal.addEventListener('abort', onAbort, { once: true });
@@ -643,7 +855,7 @@ export async function fetchDuelPuzzles(
   signal?: AbortSignal,
 ): Promise<PuzzleData[]> {
   const data = await apiJson<{ puzzles: ApiPuzzleResponse[] }>(
-    `/duels/${encodeURIComponent(idOrCode.trim())}/puzzles`,
+    spellpathPath(`/duels/${encodeURIComponent(idOrCode.trim())}/puzzles`),
     undefined,
     signal,
   );
@@ -666,7 +878,7 @@ export async function startDuelAttempt(
   signal?: AbortSignal,
 ): Promise<DuelAttempt> {
   return apiJson<DuelAttempt>(
-    `/duels/${encodeURIComponent(idOrCode.trim())}/attempts`,
+    spellpathPath(`/duels/${encodeURIComponent(idOrCode.trim())}/attempts`),
     { method: 'POST', body: JSON.stringify({ player_id: playerId }) },
     signal,
   );
@@ -683,7 +895,7 @@ export async function fetchDuelLeaderboard(
   }
   const qs = params.toString();
   return apiJson<DuelLeaderboard>(
-    `/duels/${encodeURIComponent(idOrCode.trim())}/leaderboard${qs ? `?${qs}` : ''}`,
+    spellpathPath(`/duels/${encodeURIComponent(idOrCode.trim())}/leaderboard${qs ? `?${qs}` : ''}`),
     undefined,
     signal,
   );
@@ -702,7 +914,7 @@ export async function submitDuelPuzzle(
   signal?: AbortSignal,
 ): Promise<DuelSubmitResponse> {
   return apiJsonWithRetry<DuelSubmitResponse>(
-    `/attempts/${encodeURIComponent(attemptId)}/puzzles/${puzzleIndex}/submit`,
+    spellpathPath(`/attempts/${encodeURIComponent(attemptId)}/puzzles/${puzzleIndex}/submit`),
     {
       method: 'POST',
       body: JSON.stringify({
@@ -723,7 +935,7 @@ export async function fetchRevealedDuelPuzzles(
   signal?: AbortSignal,
 ): Promise<PuzzleData[]> {
   const data = await apiJson<{ puzzles: ApiPuzzleResponse[] }>(
-    `/attempts/${encodeURIComponent(attemptId)}/revealed-puzzles`,
+    spellpathPath(`/attempts/${encodeURIComponent(attemptId)}/revealed-puzzles`),
     undefined,
     signal,
   );
@@ -738,6 +950,92 @@ export async function fetchRevealedDuelPuzzles(
             : 'hard';
     return mapApiPuzzle(p, difficulty);
   });
+}
+
+// ---------------------------------------------------------------------------
+// Live 1v1 duel (matchmaking queue + WebSocket)
+// ---------------------------------------------------------------------------
+
+export async function joinLiveDuelQueue(
+  userId: string,
+  displayName: string,
+  signal?: AbortSignal,
+): Promise<LiveDuelJoinResponse> {
+  return apiJson<LiveDuelJoinResponse>(
+    spellpathPath('/duels/queue'),
+    {
+      method: 'POST',
+      body: JSON.stringify({ user_id: userId, display_name: displayName }),
+    },
+    signal,
+  );
+}
+
+export async function joinLiveDuelBot(
+  userId: string,
+  displayName: string,
+  signal?: AbortSignal,
+): Promise<LiveDuelJoinResponse> {
+  return apiJson<LiveDuelJoinResponse>(
+    spellpathPath('/duels/queue/bot'),
+    {
+      method: 'POST',
+      body: JSON.stringify({ user_id: userId, display_name: displayName }),
+    },
+    signal,
+  );
+}
+
+export async function leaveLiveDuelQueue(
+  userId: string,
+  signal?: AbortSignal,
+): Promise<{ ok: boolean }> {
+  return apiJson<{ ok: boolean }>(
+    spellpathPath('/duels/queue/leave'),
+    {
+      method: 'POST',
+      body: JSON.stringify({ user_id: userId }),
+    },
+    signal,
+  );
+}
+
+export async function forfeitLiveDuel(
+  duelId: string,
+  userId: string,
+  signal?: AbortSignal,
+): Promise<LiveDuelEndPayload> {
+  return apiJsonWithRetry<LiveDuelEndPayload>(
+    spellpathPath(`/duels/${encodeURIComponent(duelId)}/forfeit`),
+    {
+      method: 'POST',
+      body: JSON.stringify({ user_id: userId }),
+    },
+    signal,
+  );
+}
+
+export async function fetchLiveDuelQueueStatus(
+  userId: string,
+  signal?: AbortSignal,
+): Promise<LiveDuelQueueStatus> {
+  const params = new URLSearchParams({ user_id: userId });
+  return apiJson<LiveDuelQueueStatus>(
+    spellpathPath(`/duels/queue/status?${params.toString()}`),
+    undefined,
+    signal,
+  );
+}
+
+export async function resolveLiveDuelWsUrl(
+  duelId: string,
+  userId: string,
+  signal?: AbortSignal,
+): Promise<string> {
+  const base = await resolveLiveApiBase(signal);
+  const wsBase = base.replace(/^http/i, 'ws');
+  const params = new URLSearchParams({ user_id: userId });
+  return `${wsBase}${spellpathPath(`/ws/duel/${encodeURIComponent(duelId)}`)}?${params.toString()}`;
 }
 
 export function formatDuration(ms: number | null | undefined): string {
@@ -771,7 +1069,7 @@ export function buildDuelShareMessage(opts: {
   }[];
 }): string {
   const lines = [
-    `Spell Path Duel ${opts.code}`,
+    `Spellpath Combat ${opts.code}`,
     `${opts.playerName} · ${opts.totalScore.toFixed(2)} pts · ${formatDuration(opts.totalTimeMs)}`,
   ];
 
@@ -800,5 +1098,48 @@ export function buildDuelShareMessage(opts: {
     .join('');
   lines.push(icons);
   lines.push(`Challenge code: ${opts.code}`);
+  return lines.join('\n');
+}
+
+/** Wordle-style share card for live 1v1 duel results. */
+export function buildLiveDuelShareMessage(opts: {
+  playerName: string;
+  opponentName: string;
+  myScore: number;
+  opponentScore: number;
+  won: boolean | null;
+  puzzlesSolved: number;
+  puzzleResults: {
+    difficulty?: string;
+    solved: boolean;
+    score: number | null;
+  }[];
+}): string {
+  const outcome =
+    opts.won === true ? 'Won' : opts.won === false ? 'Lost' : 'Tied';
+  const lines = [
+    `⚡ Live Duel — ${outcome} vs ${opts.opponentName}`,
+    `${opts.playerName} ${opts.myScore.toFixed(2)} – ${opts.opponentScore.toFixed(2)} ${opts.opponentName}`,
+    `${opts.puzzlesSolved} puzzles solved`,
+  ];
+
+  const icons = opts.puzzleResults
+    .map((r) => {
+      if (!r.solved) {
+        return '⬛';
+      }
+      if (r.difficulty === 'hard' || r.difficulty === 'very_hard') {
+        return '🟥';
+      }
+      if (r.difficulty === 'medium') {
+        return '🟧';
+      }
+      return '🟩';
+    })
+    .join('');
+  if (icons) {
+    lines.push(icons);
+  }
+  lines.push('Race opponents in Live Duel — Spellpath');
   return lines.join('\n');
 }

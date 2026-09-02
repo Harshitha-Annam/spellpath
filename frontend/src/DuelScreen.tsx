@@ -271,7 +271,7 @@ export const DuelScreen: React.FC<Props> = ({
       setDuel(next);
     } catch (err) {
       if (!(err instanceof Error && err.name === 'AbortError')) {
-        setError(err instanceof Error ? err.message : 'Could not create duel');
+        setError(err instanceof Error ? err.message : 'Could not create spellpath combat');
       }
     } finally {
       setIsBusy(false);
@@ -294,11 +294,11 @@ export const DuelScreen: React.FC<Props> = ({
         setDuel(next);
       }
       if (next.status === 'failed') {
-        throw new Error(next.error || 'This duel failed to prepare');
+        throw new Error(next.error || 'This spellpath combat failed to prepare');
       }
     } catch (err) {
       if (!(err instanceof Error && err.name === 'AbortError')) {
-        setError(err instanceof Error ? err.message : 'Could not join duel');
+        setError(err instanceof Error ? err.message : 'Could not join spellpath combat');
       }
     } finally {
       setIsBusy(false);
@@ -335,7 +335,7 @@ export const DuelScreen: React.FC<Props> = ({
       }
     } catch (err) {
       if (!(err instanceof Error && err.name === 'AbortError')) {
-        setError(err instanceof Error ? err.message : 'Could not start duel');
+        setError(err instanceof Error ? err.message : 'Could not start spellpath combat');
       }
     } finally {
       setIsBusy(false);
@@ -483,7 +483,7 @@ export const DuelScreen: React.FC<Props> = ({
     return (
       <View style={styles.loading}>
         <ActivityIndicator size="large" color="#0f766e" />
-        <Text style={styles.loadingText}>Loading duel…</Text>
+        <Text style={styles.loadingText}>Loading spellpath combat…</Text>
       </View>
     );
   }

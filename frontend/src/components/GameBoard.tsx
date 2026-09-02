@@ -9,6 +9,7 @@ import {
 import Svg, { Path, Line, Circle, G, Rect, Text as SvgText } from 'react-native-svg';
 import { PuzzleData, GridPos } from '../types';
 import { getWallKey } from '../puzzleGenerator';
+import { areMilestonesSequential } from '../scoring';
 
 interface Props {
   puzzle: PuzzleData;
@@ -58,9 +59,9 @@ export const GameBoard: React.FC<Props> = ({
   }, [walls]);
 
   // Local path drives rendering; parent is updated at most once per frame.
-  const [localPath, setLocalPath] = useState<GridPos[]>(path);
-  const pathRef = useRef<GridPos[]>(path);
-  const visitedRef = useRef<Set<string>>(new Set(path.map(cellKey)));
+  const [localPath, setLocalPath] = useState<GridPos[]>(() => [startCell]);
+  const pathRef = useRef<GridPos[]>([startCell]);
+  const visitedRef = useRef<Set<string>>(new Set([cellKey(startCell)]));
 
   const boardOrigin = useRef({ x: 0, y: 0 });
   const pointerDownRef = useRef(false);
@@ -71,14 +72,58 @@ export const GameBoard: React.FC<Props> = ({
   const commitRafRef = useRef<number | null>(null);
   const lockedRef = useRef(interactionLocked);
   lockedRef.current = interactionLocked;
+  const puzzleIdRef = useRef<string | null>(null);
   /** Dedupe miss/backtrack while finger stays on the same invalid/prev cell. */
   const lastStatsCellRef = useRef<string | null>(null);
   const onMissRef = useRef(onMiss);
   const onBacktrackRef = useRef(onBacktrack);
+  const onDragChangeRef = useRef(onDragChange);
+  const scrollLockRef = useRef(false);
   onMissRef.current = onMiss;
   onBacktrackRef.current = onBacktrack;
+  onDragChangeRef.current = onDragChange;
 
-  // Sync from parent when not actively dragging (reset / solution / new puzzle).
+  const setParentScrollLock = useCallback((locked: boolean) => {
+    if (scrollLockRef.current === locked) {
+      return;
+    }
+    scrollLockRef.current = locked;
+    onDragChangeRef.current?.(locked);
+  }, []);
+
+  const resetBoardPath = useCallback(
+    (next: GridPos[]) => {
+      pathRef.current = next;
+      visitedRef.current = new Set(next.map(cellKey));
+      setLocalPath(next);
+    },
+    [],
+  );
+
+  const cancelPendingCommit = useCallback(() => {
+    if (commitRafRef.current != null) {
+      cancelAnimationFrame(commitRafRef.current);
+      commitRafRef.current = null;
+    }
+    pendingCommitRef.current = null;
+  }, []);
+
+  // Hard reset when the puzzle changes — never carry path/drag state across boards.
+  useEffect(() => {
+    if (puzzleIdRef.current === puzzle.id) {
+      return;
+    }
+    puzzleIdRef.current = puzzle.id;
+    pointerDownRef.current = false;
+    dragActiveRef.current = false;
+    pressStartRef.current = null;
+    lastStrokeRef.current = null;
+    lastStatsCellRef.current = null;
+    cancelPendingCommit();
+    resetBoardPath([startCell]);
+  }, [puzzle.id, startCell, cancelPendingCommit, resetBoardPath]);
+
+  // Sync from parent when not actively dragging (reset / solution / same puzzle).
   useEffect(() => {
     if (pointerDownRef.current) {
       return;
@@ -90,11 +135,9 @@ export const GameBoard: React.FC<Props> = ({
 
   useEffect(() => {
     return () => {
-      if (commitRafRef.current != null) {
-        cancelAnimationFrame(commitRafRef.current);
-      }
+      cancelPendingCommit();
     };
-  }, []);
+  }, [cancelPendingCommit]);
 
   const onLayout = useCallback((e: LayoutChangeEvent) => {
     const target = e.target as unknown as View;
@@ -128,13 +171,7 @@ export const GameBoard: React.FC<Props> = ({
   const isBlocked = (a: GridPos, b: GridPos) =>
     wallSet.has(getWallKey(a.row, a.col, b.row, b.col));
 
-  const collectedMilestoneCount = (current: GridPos[]) =>
-    current.reduce(
-      (n, p) => n + (cells[p.row][p.col].letter ? 1 : 0),
-      0,
-    );
-
-  const canEnter = (from: GridPos, to: GridPos, current: GridPos[]) => {
+  const canEnter = (from: GridPos, to: GridPos) => {
     const orthogonal =
       Math.abs(to.row - from.row) + Math.abs(to.col - from.col) === 1;
     if (!orthogonal) {
@@ -146,33 +183,21 @@ export const GameBoard: React.FC<Props> = ({
     if (isBlocked(from, to)) {
       return false;
     }
-
-    const letter = cells[to.row][to.col].letter;
-    if (letter) {
-      const collected = collectedMilestoneCount(current);
-      const expected = milestones[collected];
-      if (
-        !expected ||
-        expected.cell.row !== to.row ||
-        expected.cell.col !== to.col
-      ) {
-        return false;
-      }
-      const isLastMilestone = collected === milestones.length - 1;
-      if (isLastMilestone && current.length + 1 !== gridSize * gridSize) {
-        return false;
-      }
-    }
     return true;
   };
 
   const scheduleCommit = (next: GridPos[]) => {
+    const commitForPuzzle = puzzleIdRef.current;
     pendingCommitRef.current = next;
     if (commitRafRef.current != null) {
       return;
     }
     commitRafRef.current = requestAnimationFrame(() => {
       commitRafRef.current = null;
+      if (puzzleIdRef.current !== commitForPuzzle) {
+        pendingCommitRef.current = null;
+        return;
+      }
       const pending = pendingCommitRef.current;
       pendingCommitRef.current = null;
       if (!pending) {
@@ -234,7 +259,7 @@ export const GameBoard: React.FC<Props> = ({
       return;
     }
 
-    if (canEnter(head, target, current)) {
+    if (canEnter(head, target)) {
       lastStatsCellRef.current = null;
       const next = [...current, target];
       pathRef.current = next;
@@ -243,7 +268,7 @@ export const GameBoard: React.FC<Props> = ({
       return;
     }
 
-    // Adjacent but illegal (wall, visited, wrong milestone) = miss.
+    // Adjacent but illegal (wall or revisit) = miss.
     if (lastStatsCellRef.current !== `miss:${targetKey}`) {
       lastStatsCellRef.current = `miss:${targetKey}`;
       onMissRef.current?.();
@@ -289,7 +314,7 @@ export const GameBoard: React.FC<Props> = ({
     lastStatsCellRef.current = null;
     const { x, y } = measureFromEvent(evt);
     pressStartRef.current = { x, y };
-    onDragChange?.(true);
+    setParentScrollLock(true);
     // Intentionally do not extend path on press — taps must not create a path.
   };
 
@@ -342,7 +367,20 @@ export const GameBoard: React.FC<Props> = ({
       onPathChange(pending);
     }
 
-    onDragChange?.(false);
+    setParentScrollLock(false);
+  };
+
+  const handleTouchStart = () => {
+    if (lockedRef.current) {
+      return;
+    }
+    // Lock parent scroll before the responder grant so upward drags don't
+    // trigger ScrollView overscroll (especially from the bottom start cell).
+    setParentScrollLock(true);
+  };
+
+  const handleTouchEnd = () => {
+    setParentScrollLock(false);
   };
 
   const pathKeySet = useMemo(() => {
@@ -374,6 +412,10 @@ export const GameBoard: React.FC<Props> = ({
   const tubeWidth = Math.min(cellSize * 0.58, 34);
 
   const head = localPath.length > 0 ? localPath[localPath.length - 1] : null;
+
+  const pathComplete = localPath.length === gridSize * gridSize;
+  const pathWrong =
+    pathComplete && !areMilestonesSequential(milestones, localPath);
 
   // Always-visible milestone markers (drawn in SVG above the path).
   const letterMarkers = useMemo(() => {
@@ -435,6 +477,9 @@ export const GameBoard: React.FC<Props> = ({
           styles.boardContainer,
           { width: boardSize, height: boardSize },
         ]}
+        onTouchStart={handleTouchStart}
+        onTouchEnd={handleTouchEnd}
+        onTouchCancel={handleTouchEnd}
         onStartShouldSetResponder={() => true}
         onMoveShouldSetResponder={() => true}
         onStartShouldSetResponderCapture={() => true}
@@ -456,11 +501,15 @@ export const GameBoard: React.FC<Props> = ({
 
               const highlightStyle = isStart
                 ? styles.startCellBackground
-                : isPathHead
-                  ? styles.pathHeadCellBackground
-                  : inPath
-                    ? styles.pathCellBackground
-                    : null;
+                : pathWrong && inPath
+                  ? isPathHead
+                    ? styles.pathWrongHeadCellBackground
+                    : styles.pathWrongCellBackground
+                  : isPathHead
+                    ? styles.pathHeadCellBackground
+                    : inPath
+                      ? styles.pathCellBackground
+                      : null;
 
               if (!highlightStyle) {
                 return null;
@@ -510,7 +559,7 @@ export const GameBoard: React.FC<Props> = ({
           {localPath.length >= 2 && (
             <Path
               d={pathSvgD}
-              stroke="#6366f1"
+              stroke={pathWrong ? '#dc2626' : '#6366f1'}
               strokeWidth={tubeWidth}
               strokeLinecap="round"
               strokeLinejoin="round"
@@ -564,7 +613,11 @@ export const GameBoard: React.FC<Props> = ({
             let fill = '#1e293b';
             let stroke = 'transparent';
             let strokeWidth = 0;
-            if (isStart) {
+            if (pathWrong && inPath && !isStart) {
+              fill = isPathHead ? '#b91c1c' : '#dc2626';
+              stroke = '#fecaca';
+              strokeWidth = isPathHead ? 3 : 2;
+            } else if (isStart) {
               fill = '#15803d';
               stroke = '#bbf7d0';
               strokeWidth = 2;
@@ -667,5 +720,11 @@ const styles = StyleSheet.create({
   },
   pathHeadCellBackground: {
     backgroundColor: '#e0e7ff',
+  },
+  pathWrongCellBackground: {
+    backgroundColor: '#fee2e2',
+  },
+  pathWrongHeadCellBackground: {
+    backgroundColor: '#fecaca',
   },
 });

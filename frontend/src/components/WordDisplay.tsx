@@ -7,6 +7,8 @@ interface Props {
   targetWord: string;
   currentWord: string;
   isSolved: boolean;
+  hideTargetWord?: boolean;
+  showSolvedBanner?: boolean;
   misses?: number;
   backtracks?: number;
   scoreResult?: ScoreResult | null;
@@ -17,48 +19,40 @@ export const WordDisplay: React.FC<Props> = ({
   targetWord,
   currentWord,
   isSolved,
+  hideTargetWord = false,
+  showSolvedBanner = true,
   misses = 0,
   backtracks = 0,
   scoreResult = null,
   scorePending = false,
 }) => {
+  const showCurrentPath = hideTargetWord || currentWord.length > 0;
+
   return (
     <View style={styles.container}>
-      {/* Target Word preview */}
-      <View style={styles.targetSection}>
-        <Text style={styles.targetLabel}>TARGET WORD</Text>
-        <Text style={styles.targetWord}>{targetWord}</Text>
-      </View>
-
-      {/* Spelled Word state */}
-      <View style={styles.currentSection}>
-        <Text style={styles.currentLabel}>
-          SPELLED:{' '}
-          <Text style={styles.lengthText}>
-            ({currentWord.length}/{targetWord.length})
-          </Text>
-        </Text>
-        <View style={styles.lettersContainer}>
-          {currentWord.split('').map((char, index) => (
-            <View key={index} style={styles.letterBox}>
-              <Text style={styles.letterText}>{char}</Text>
-            </View>
-          ))}
-          {currentWord.length === 0 && (
-            <Text style={styles.placeholderText}>
-              Drag from START through empty cells to spell
-            </Text>
-          )}
+      {!hideTargetWord ? (
+        <View style={styles.targetSection}>
+          <Text style={styles.targetLabel}>TARGET WORD</Text>
+          <Text style={styles.targetWord}>{targetWord}</Text>
         </View>
-      </View>
+      ) : null}
+
+      {showCurrentPath ? (
+        <View style={[styles.currentSection, hideTargetWord && styles.currentSectionLive]}>
+          <View style={styles.lettersContainer}>
+            {currentWord.split('').map((char, index) => (
+              <View key={index} style={styles.letterBox}>
+                <Text style={styles.letterText}>{char}</Text>
+              </View>
+            ))}
+          </View>
+        </View>
+      ) : null}
 
       {/* Success banner */}
-      {isSolved && (
+      {showSolvedBanner && isSolved && (
         <View style={styles.solvedBanner}>
           <Text style={styles.solvedTitle}>PUZZLE SOLVED!</Text>
-          <Text style={styles.solvedSub}>
-            You successfully spelled {targetWord}!
-          </Text>
           <View style={styles.statsRow}>
             <View style={styles.statChip}>
               <Text style={styles.statValue}>
@@ -117,17 +111,11 @@ const styles = StyleSheet.create({
   currentSection: {
     alignItems: 'center',
     width: '100%',
+    marginTop: 4,
   },
-  currentLabel: {
-    fontSize: 11,
-    fontWeight: '700',
-    color: '#475569',
-    letterSpacing: 1,
-    marginBottom: 4,
-  },
-  lengthText: {
-    color: '#6366f1',
-    fontWeight: '800',
+  currentSectionLive: {
+    minHeight: 80,
+    justifyContent: 'center',
   },
   lettersContainer: {
     flexDirection: 'row',
@@ -155,11 +143,6 @@ const styles = StyleSheet.create({
     fontSize: 16,
     fontWeight: '800',
   },
-  placeholderText: {
-    fontSize: 13,
-    color: '#94a3b8',
-    fontStyle: 'italic',
-  },
   solvedBanner: {
     marginTop: 10,
     backgroundColor: '#10b981',
@@ -180,12 +163,6 @@ const styles = StyleSheet.create({
     fontSize: 16,
     fontWeight: '900',
     letterSpacing: 1,
-  },
-  solvedSub: {
-    color: '#ecfdf5',
-    fontSize: 12,
-    fontWeight: '600',
-    marginTop: 2,
   },
   statsRow: {
     flexDirection: 'row',

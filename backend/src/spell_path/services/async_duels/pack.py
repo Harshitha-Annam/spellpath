@@ -4,12 +4,13 @@ from __future__ import annotations
 
 import logging
 import threading
+import time
 import uuid
 from typing import Any, Dict, List
 
-from duel_store import store
-from get_puzzle import DEFAULT_GET_PUZZLE_MODEL, get_puzzle
-from scoring import score_puzzle
+from spell_path.repositories import async_duels as async_duel_repo
+from spell_path.services.puzzles.get_puzzle import DEFAULT_GET_PUZZLE_MODEL, get_puzzle
+from spell_path.services.puzzles.scoring import score_puzzle
 
 logger = logging.getLogger("duels")
 
@@ -57,12 +58,19 @@ def prepare_duel_pack(duel_id: str) -> None:
                     model_name=DEFAULT_GET_PUZZLE_MODEL,
                 )
                 puzzles.append(_strip_internal(raw, difficulty))
-                store.set_duel_progress(duel_id, i + 1)
-            store.set_duel_ready(duel_id, puzzles)
+                async_duel_repo.update_duel(duel_id, prepared_count=i + 1)
+            async_duel_repo.update_duel(
+                duel_id,
+                puzzles=puzzles,
+                prepared_count=len(puzzles),
+                status="ready",
+                ready_at=time.time(),
+                error=None,
+            )
             logger.info("duel %s ready with %s DeepSeek puzzles", duel_id, len(puzzles))
         except Exception as exc:
             logger.exception("duel %s pack generation failed: %s", duel_id, exc)
-            store.set_duel_failed(duel_id, str(exc))
+            async_duel_repo.update_duel(duel_id, status="failed", error=str(exc))
 
     thread = threading.Thread(target=_run, name=f"duel-pack-{duel_id}", daemon=True)
     thread.start()

@@ -9,6 +9,7 @@ import {
 } from 'react-native';
 import { formatDuration } from '../api';
 import { DuelInfo, PlayerProfile } from '../types';
+import { ServerHostButton } from './ServerHostButton';
 
 interface Props {
   player: PlayerProfile | null;
@@ -50,11 +51,14 @@ export const DuelLobby: React.FC<Props> = ({
 
   return (
     <View style={styles.container}>
-      <TouchableOpacity onPress={onBackToSolo} style={styles.backBtn}>
-        <Text style={styles.backText}>← Solo mode</Text>
-      </TouchableOpacity>
+      <View style={styles.topRow}>
+        <TouchableOpacity onPress={onBackToSolo} style={styles.backBtn}>
+          <Text style={styles.backText}>← Solo mode</Text>
+        </TouchableOpacity>
+        <ServerHostButton disabled={isBusy} />
+      </View>
 
-      <Text style={styles.title}>Async Duel</Text>
+      <Text style={styles.title}>Spellpath Combat</Text>
       <Text style={styles.subtitle}>
         Same 6 puzzles for everyone — 2 easy, 2 medium, 2 hard. Beat the champion
         on your own time.
@@ -110,7 +114,7 @@ export const DuelLobby: React.FC<Props> = ({
             onPress={onCreateDuel}
           >
             <Text style={styles.primaryBtnText}>
-              {isBusy ? 'Working…' : duel ? 'Create another duel' : 'Create new duel'}
+              {isBusy ? 'Working…' : duel ? 'Create another spellpath combat' : 'Create new spellpath combat'}
             </Text>
           </TouchableOpacity>
 
@@ -129,7 +133,7 @@ export const DuelLobby: React.FC<Props> = ({
             disabled={isBusy || code.trim().length < 4}
             onPress={() => onJoinDuel(code.trim())}
           >
-            <Text style={styles.secondaryBtnText}>Join duel</Text>
+            <Text style={styles.secondaryBtnText}>Join spellpath combat</Text>
           </TouchableOpacity>
         </View>
       ) : null}
@@ -178,7 +182,7 @@ export const DuelLobby: React.FC<Props> = ({
 
           {duel.status === 'failed' ? (
             <Text style={styles.errorText}>
-              {duel.error || 'Failed to prepare puzzles. Create a new duel.'}
+              {duel.error || 'Failed to prepare puzzles. Create a new spellpath combat.'}
             </Text>
           ) : null}
 
@@ -212,10 +216,16 @@ const styles = StyleSheet.create({
     paddingBottom: 24,
     width: '100%',
   },
+  topRow: {
+    width: '100%',
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    marginBottom: 8,
+  },
   backBtn: {
     alignSelf: 'flex-start',
     paddingVertical: 6,
-    marginBottom: 8,
   },
   backText: {
     color: '#0f766e',

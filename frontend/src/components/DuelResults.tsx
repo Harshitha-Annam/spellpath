@@ -93,7 +93,7 @@ export const DuelResults: React.FC<Props> = ({
 
   return (
     <View style={styles.container}>
-      <Text style={styles.eyebrow}>DUEL COMPLETE</Text>
+      <Text style={styles.eyebrow}>SPELLPATH COMBAT COMPLETE</Text>
       {attempt.became_champion ? (
         <Text style={styles.hero}>You took the crown!</Text>
       ) : attempt.beat_champion ? (
@@ -209,7 +209,7 @@ export const DuelResults: React.FC<Props> = ({
         <Text style={styles.primaryBtnText}>Try again on this pack</Text>
       </TouchableOpacity>
       <TouchableOpacity style={styles.secondaryBtn} onPress={onBackToLobby}>
-        <Text style={styles.secondaryBtnText}>Back to duel lobby</Text>
+        <Text style={styles.secondaryBtnText}>Back to spellpath combat lobby</Text>
       </TouchableOpacity>
       <TouchableOpacity onPress={onBackToSolo}>
         <Text style={styles.link}>Return to solo mode</Text>

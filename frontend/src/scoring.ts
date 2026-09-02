@@ -49,6 +49,39 @@ export function basePointsForPuzzle(puzzle: PuzzleData): number {
   return DIFFICULTY_BASE_POINTS[puzzle.difficulty] ?? puzzle.gridSize;
 }
 
+/** True when milestone letters appear along the path in index order. */
+export function areMilestonesSequential(
+  milestones: PuzzleData['milestones'],
+  path: GridPos[],
+): boolean {
+  const ordered = [...milestones].sort((a, b) => a.index - b.index);
+  if (ordered.length === 0) {
+    return false;
+  }
+
+  const milestoneAt = new Map<string, number>();
+  for (const milestone of ordered) {
+    milestoneAt.set(cellKey(milestone.cell), milestone.index);
+  }
+
+  let nextIdx = 0;
+  for (let i = 0; i < path.length; i++) {
+    const idx = milestoneAt.get(cellKey(path[i]));
+    if (idx === undefined) {
+      continue;
+    }
+    if (idx !== nextIdx) {
+      return false;
+    }
+    if (idx === ordered.length - 1 && i !== path.length - 1) {
+      return false;
+    }
+    nextIdx += 1;
+  }
+
+  return nextIdx === ordered.length;
+}
+
 export function computeScoreBreakdown(
   basePoints: number,
   misses: number,
@@ -145,34 +178,11 @@ export function validateSolutionPath(
     return { ok: false, reason: 'path must end on the last milestone' };
   }
 
-  const milestoneAt = new Map<string, number>();
-  for (const milestone of ordered) {
-    milestoneAt.set(cellKey(milestone.cell), milestone.index);
-  }
-
-  let nextIdx = 0;
-  for (let i = 0; i < path.length; i++) {
-    const idx = milestoneAt.get(cellKey(path[i]));
-    if (idx === undefined) {
-      continue;
-    }
-    if (idx !== nextIdx) {
-      return {
-        ok: false,
-        reason: `milestones must be visited in order (expected ${nextIdx}, got ${idx})`,
-      };
-    }
-    if (idx === ordered.length - 1 && i !== path.length - 1) {
-      return {
-        ok: false,
-        reason: 'last milestone may only be visited as the final cell',
-      };
-    }
-    nextIdx += 1;
-  }
-
-  if (nextIdx !== ordered.length) {
-    return { ok: false, reason: 'path does not visit every milestone' };
+  if (!areMilestonesSequential(milestones, path)) {
+    return {
+      ok: false,
+      reason: 'milestones must be visited in order',
+    };
   }
 
   return { ok: true, reason: 'ok' };

@@ -51,7 +51,7 @@ export interface ScoreResult {
   backtrack_penalty: number;
 }
 
-export type AppMode = 'solo' | 'duel';
+export type AppMode = 'solo' | 'duel' | 'liveDuel';
 
 export interface PlayerProfile {
   id: string;
@@ -147,3 +147,60 @@ export interface DuelSubmitResponse {
   leaderboard: DuelLeaderboard | null;
   revealed_puzzles?: unknown[] | null;
 }
+
+export type LiveDuelPhase = 'queue' | 'countdown' | 'playing' | 'result';
+
+export interface LiveDuelQueueStatus {
+  in_queue: boolean;
+  matched: boolean;
+  duel_id: string | null;
+  opponent_name?: string | null;
+}
+
+export interface LiveDuelJoinResponse {
+  matched: boolean;
+  duel_id: string | null;
+  opponent_name?: string | null;
+  is_bot?: boolean;
+}
+
+export interface LiveDuelOpponentProgress {
+  solved: number;
+  score: number;
+  displayName?: string;
+}
+
+export interface LiveDuelPuzzleResult {
+  index: number;
+  puzzle_id?: string;
+  word?: string;
+  difficulty?: string;
+  grid_size?: number;
+  solved: boolean;
+  score: number | null;
+  base_points: number;
+  misses: number;
+  backtracks: number;
+  miss_penalty: number;
+  backtrack_penalty: number;
+}
+
+export interface LiveDuelScoreBreakdown {
+  base_points: number;
+  misses: number;
+  backtracks: number;
+  miss_penalty: number;
+  backtrack_penalty: number;
+  score: number | null;
+}
+
+export interface LiveDuelEndPayload {
+  scores: Record<string, number>;
+  winner_id: string | null;
+  puzzles_solved: Record<string, number>;
+  player_names?: Record<string, string>;
+  puzzle_results?: Record<string, LiveDuelPuzzleResult[]>;
+  end_reason?: string | null;
+}
+
+export type LiveDuelRematchStatus = 'idle' | 'waiting' | 'offer' | 'matched' | 'unavailable';
