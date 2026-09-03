@@ -101,13 +101,13 @@ const styles = StyleSheet.create({
     width: '100%',
     maxWidth: 420,
     alignSelf: 'center',
-    backgroundColor: '#f0fdfa',
+    backgroundColor: '#1a1a28',
     borderRadius: 14,
     padding: 12,
     marginTop: 8,
     marginBottom: 4,
     borderWidth: 1,
-    borderColor: '#99f6e4',
+    borderColor: '#2a2a3a',
   },
   topRow: {
     flexDirection: 'row',
@@ -119,17 +119,17 @@ const styles = StyleSheet.create({
   label: {
     fontSize: 10,
     fontWeight: '800',
-    color: '#0f766e',
+    color: '#7c6cff',
     letterSpacing: 1,
   },
   value: {
     fontSize: 22,
     fontWeight: '900',
-    color: '#134e4a',
+    color: '#f5f5ff',
   },
   ghostLine: {
     marginTop: 6,
-    color: '#b45309',
+    color: '#fbbf24',
     fontWeight: '700',
     fontSize: 13,
   },
@@ -145,20 +145,20 @@ const styles = StyleSheet.create({
     alignItems: 'center',
   },
   slotDone: {
-    backgroundColor: '#0f766e',
+    backgroundColor: '#7c6cff',
   },
   slotSkipped: {
-    backgroundColor: '#94a3b8',
+    backgroundColor: '#555',
   },
   slotCurrent: {
-    backgroundColor: '#f59e0b',
+    backgroundColor: '#fbbf24',
   },
   slotPending: {
-    backgroundColor: '#ccfbf1',
+    backgroundColor: '#2a2a3a',
   },
   slotLetter: {
     fontWeight: '900',
-    color: '#115e59',
+    color: '#aaa',
     fontSize: 12,
   },
   slotLetterActive: {
@@ -168,15 +168,15 @@ const styles = StyleSheet.create({
     marginTop: 2,
     fontSize: 10,
     fontWeight: '700',
-    color: '#0f766e',
+    color: '#7c6cff',
   },
   slotScoreActive: {
-    color: '#ecfdf5',
+    color: '#f5f5ff',
   },
   progressCaption: {
     marginTop: 8,
     textAlign: 'center',
-    color: '#64748b',
+    color: '#888',
     fontWeight: '600',
     fontSize: 12,
   },

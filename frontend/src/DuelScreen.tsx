@@ -482,7 +482,7 @@ export const DuelScreen: React.FC<Props> = ({
   if (!puzzle || !attempt) {
     return (
       <View style={styles.loading}>
-        <ActivityIndicator size="large" color="#0f766e" />
+        <ActivityIndicator size="large" color="#7c6cff" />
         <Text style={styles.loadingText}>Loading spellpath combat…</Text>
       </View>
     );
@@ -554,15 +554,15 @@ const styles = StyleSheet.create({
     paddingVertical: 12,
     borderRadius: 10,
     alignItems: 'center',
-    backgroundColor: '#f1f5f9',
+    backgroundColor: '#1e1e2e',
     borderWidth: 1,
-    borderColor: '#cbd5e1',
+    borderColor: '#333',
   },
   skipBtnDisabled: {
     opacity: 0.55,
   },
   skipBtnText: {
-    color: '#475569',
+    color: '#ccc',
     fontWeight: '800',
     fontSize: 14,
   },
@@ -572,7 +572,7 @@ const styles = StyleSheet.create({
     paddingVertical: 10,
     paddingHorizontal: 18,
     borderRadius: 10,
-    backgroundColor: '#0f766e',
+    backgroundColor: '#7c6cff',
   },
   retryBtnText: {
     color: '#ffffff',
@@ -586,18 +586,18 @@ const styles = StyleSheet.create({
     gap: 10,
   },
   loadingText: {
-    color: '#0f766e',
+    color: '#7c6cff',
     fontWeight: '700',
   },
   errorText: {
-    color: '#b91c1c',
+    color: '#ff6b6b',
     fontWeight: '700',
     paddingHorizontal: 16,
     marginBottom: 6,
   },
   codeHint: {
     marginTop: 10,
-    color: '#64748b',
+    color: '#888',
     fontWeight: '700',
     letterSpacing: 1,
   },

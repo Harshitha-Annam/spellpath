@@ -66,6 +66,8 @@ export const GameBoard: React.FC<Props> = ({
   const boardOrigin = useRef({ x: 0, y: 0 });
   const pointerDownRef = useRef(false);
   const dragActiveRef = useRef(false);
+  /** True only when this gesture pressed down on the current path head. */
+  const drawArmedRef = useRef(false);
   const pressStartRef = useRef<{ x: number; y: number } | null>(null);
   const lastStrokeRef = useRef<{ x: number; y: number } | null>(null);
   const pendingCommitRef = useRef<GridPos[] | null>(null);
@@ -75,6 +77,12 @@ export const GameBoard: React.FC<Props> = ({
   const puzzleIdRef = useRef<string | null>(null);
   /** Dedupe miss/backtrack while finger stays on the same invalid/prev cell. */
   const lastStatsCellRef = useRef<string | null>(null);
+  /**
+   * Armed illegal cell from a stroke endpoint. Corner clips during
+   * interpolation must not count; a miss only commits after a second
+   * consecutive terminal hit on the same illegal cell.
+   */
+  const pendingMissRef = useRef<string | null>(null);
   const onMissRef = useRef(onMiss);
   const onBacktrackRef = useRef(onBacktrack);
   const onDragChangeRef = useRef(onDragChange);
@@ -116,9 +124,11 @@ export const GameBoard: React.FC<Props> = ({
     puzzleIdRef.current = puzzle.id;
     pointerDownRef.current = false;
     dragActiveRef.current = false;
+    drawArmedRef.current = false;
     pressStartRef.current = null;
     lastStrokeRef.current = null;
     lastStatsCellRef.current = null;
+    pendingMissRef.current = null;
     cancelPendingCommit();
     resetBoardPath([startCell]);
   }, [puzzle.id, startCell, cancelPendingCommit, resetBoardPath]);
@@ -168,6 +178,24 @@ export const GameBoard: React.FC<Props> = ({
     return { row, col };
   };
 
+  /** Drawing only starts from the path tip — a random slide across empty cells is ignored. */
+  const isOnPathHead = (localX: number, localY: number): boolean => {
+    const cell = cellAt(localX, localY);
+    const current = pathRef.current;
+    if (!cell || current.length === 0) {
+      return false;
+    }
+    return sameCell(cell, current[current.length - 1]);
+  };
+
+  const shouldCaptureDrawGesture = (evt: GestureResponderEvent): boolean => {
+    if (lockedRef.current) {
+      return false;
+    }
+    const { x, y } = measureFromEvent(evt);
+    return isOnPathHead(x, y);
+  };
+
   const isBlocked = (a: GridPos, b: GridPos) =>
     wallSet.has(getWallKey(a.row, a.col, b.row, b.col));
 
@@ -208,8 +236,13 @@ export const GameBoard: React.FC<Props> = ({
     });
   };
 
-  /** Only enter the cell under the finger — never chase distant cells. */
-  const tryEnterCell = (target: GridPos) => {
+  /**
+   * Only enter the cell under the finger — never chase distant cells.
+   * @param recordMiss When false (interpolated stroke samples), illegal
+   * adjacent cells are ignored so corner clips do not inflate misses.
+   * When true (actual finger endpoint), arm/confirm a pending miss.
+   */
+  const tryEnterCell = (target: GridPos, recordMiss = false) => {
     if (lockedRef.current) {
       return;
     }
@@ -221,6 +254,7 @@ export const GameBoard: React.FC<Props> = ({
         pathRef.current = next;
         visitedRef.current = new Set([cellKey(startCell)]);
         lastStatsCellRef.current = null;
+        pendingMissRef.current = null;
         scheduleCommit(next);
       }
       return;
@@ -229,6 +263,7 @@ export const GameBoard: React.FC<Props> = ({
     const head = current[current.length - 1];
     if (sameCell(head, target)) {
       lastStatsCellRef.current = null;
+      pendingMissRef.current = null;
       return;
     }
 
@@ -236,6 +271,7 @@ export const GameBoard: React.FC<Props> = ({
 
     // Undo one step when dragging back onto the previous cell.
     if (current.length >= 2 && sameCell(current[current.length - 2], target)) {
+      pendingMissRef.current = null;
       if (lastStatsCellRef.current !== `back:${targetKey}`) {
         lastStatsCellRef.current = `back:${targetKey}`;
         onBacktrackRef.current?.();
@@ -261,6 +297,7 @@ export const GameBoard: React.FC<Props> = ({
 
     if (canEnter(head, target)) {
       lastStatsCellRef.current = null;
+      pendingMissRef.current = null;
       const next = [...current, target];
       pathRef.current = next;
       visitedRef.current.add(cellKey(target));
@@ -268,16 +305,27 @@ export const GameBoard: React.FC<Props> = ({
       return;
     }
 
-    // Adjacent but illegal (wall or revisit) = miss.
-    if (lastStatsCellRef.current !== `miss:${targetKey}`) {
-      lastStatsCellRef.current = `miss:${targetKey}`;
-      onMissRef.current?.();
+    // Adjacent but illegal (wall or revisit). Ignore mid-stroke clips;
+    // only arm/confirm from the real finger endpoint.
+    if (!recordMiss) {
+      return;
     }
+
+    if (pendingMissRef.current === targetKey) {
+      if (lastStatsCellRef.current !== `miss:${targetKey}`) {
+        lastStatsCellRef.current = `miss:${targetKey}`;
+        onMissRef.current?.();
+      }
+      return;
+    }
+
+    pendingMissRef.current = targetKey;
   };
 
   /**
    * Sample along the finger stroke so fast swipes still fill adjacent cells
    * the pointer crossed — without a rubber-band stick or sideways elongation.
+   * Only the stroke endpoint may record a miss (avoids corner-clip false misses).
    */
   const handleStroke = (x: number, y: number) => {
     const prev = lastStrokeRef.current;
@@ -286,7 +334,7 @@ export const GameBoard: React.FC<Props> = ({
     if (!prev) {
       const cell = cellAt(x, y);
       if (cell) {
-        tryEnterCell(cell);
+        tryEnterCell(cell, true);
       }
       return;
     }
@@ -299,7 +347,7 @@ export const GameBoard: React.FC<Props> = ({
       const sy = prev.y + (y - prev.y) * t;
       const cell = cellAt(sx, sy);
       if (cell) {
-        tryEnterCell(cell);
+        tryEnterCell(cell, i === steps);
       }
     }
   };
@@ -308,18 +356,23 @@ export const GameBoard: React.FC<Props> = ({
     if (lockedRef.current) {
       return;
     }
-    pointerDownRef.current = true;
-    dragActiveRef.current = false;
-    lastStrokeRef.current = null;
-    lastStatsCellRef.current = null;
     const { x, y } = measureFromEvent(evt);
     pressStartRef.current = { x, y };
-    setParentScrollLock(true);
+    const armed = isOnPathHead(x, y);
+    pointerDownRef.current = armed;
+    dragActiveRef.current = false;
+    drawArmedRef.current = armed;
+    lastStrokeRef.current = null;
+    lastStatsCellRef.current = null;
+    pendingMissRef.current = null;
+    if (armed) {
+      setParentScrollLock(true);
+    }
     // Intentionally do not extend path on press — taps must not create a path.
   };
 
   const moveDrag = (evt: GestureResponderEvent) => {
-    if (lockedRef.current || !pointerDownRef.current) {
+    if (lockedRef.current || !pointerDownRef.current || !drawArmedRef.current) {
       return;
     }
 
@@ -347,13 +400,17 @@ export const GameBoard: React.FC<Props> = ({
 
   const endDrag = () => {
     if (!pointerDownRef.current) {
+      drawArmedRef.current = false;
       return;
     }
     pointerDownRef.current = false;
     dragActiveRef.current = false;
+    drawArmedRef.current = false;
     pressStartRef.current = null;
     lastStrokeRef.current = null;
     lastStatsCellRef.current = null;
+    // Drop unconfirmed corner clips; intentional holds already committed mid-drag.
+    pendingMissRef.current = null;
 
     // Flush any pending path commit immediately so parent stays in sync.
     if (commitRafRef.current != null) {
@@ -370,12 +427,16 @@ export const GameBoard: React.FC<Props> = ({
     setParentScrollLock(false);
   };
 
-  const handleTouchStart = () => {
+  const handleTouchStart = (evt: GestureResponderEvent) => {
     if (lockedRef.current) {
       return;
     }
-    // Lock parent scroll before the responder grant so upward drags don't
-    // trigger ScrollView overscroll (especially from the bottom start cell).
+    const { x, y } = measureFromEvent(evt);
+    if (!isOnPathHead(x, y)) {
+      return;
+    }
+    // Lock parent scroll before the responder grant so upward drags from
+    // the path head don't trigger ScrollView overscroll.
     setParentScrollLock(true);
   };
 
@@ -480,10 +541,10 @@ export const GameBoard: React.FC<Props> = ({
         onTouchStart={handleTouchStart}
         onTouchEnd={handleTouchEnd}
         onTouchCancel={handleTouchEnd}
-        onStartShouldSetResponder={() => true}
-        onMoveShouldSetResponder={() => true}
-        onStartShouldSetResponderCapture={() => true}
-        onMoveShouldSetResponderCapture={() => true}
+        onStartShouldSetResponder={shouldCaptureDrawGesture}
+        onMoveShouldSetResponder={() => false}
+        onStartShouldSetResponderCapture={shouldCaptureDrawGesture}
+        onMoveShouldSetResponderCapture={() => false}
         onResponderTerminationRequest={() => false}
         onResponderGrant={startDrag}
         onResponderMove={moveDrag}
@@ -551,7 +612,7 @@ export const GameBoard: React.FC<Props> = ({
               y1={line.y1}
               x2={line.x2}
               y2={line.y2}
-              stroke="#cbd5e1"
+              stroke="#2a2a3a"
               strokeWidth={1}
             />
           ))}
@@ -559,7 +620,7 @@ export const GameBoard: React.FC<Props> = ({
           {localPath.length >= 2 && (
             <Path
               d={pathSvgD}
-              stroke={pathWrong ? '#dc2626' : '#6366f1'}
+              stroke={pathWrong ? '#ff6b6b' : '#7c6cff'}
               strokeWidth={tubeWidth}
               strokeLinecap="round"
               strokeLinejoin="round"
@@ -596,7 +657,7 @@ export const GameBoard: React.FC<Props> = ({
                 y1={y1}
                 x2={x2}
                 y2={y2}
-                stroke="#0f172a"
+                stroke="#f5f5ff"
                 strokeWidth={7}
                 strokeLinecap="round"
               />
@@ -610,23 +671,23 @@ export const GameBoard: React.FC<Props> = ({
             const isPathHead =
               !!head && head.row === row && head.col === col;
 
-            let fill = '#1e293b';
+            let fill = '#ccc';
             let stroke = 'transparent';
             let strokeWidth = 0;
             if (pathWrong && inPath && !isStart) {
-              fill = isPathHead ? '#b91c1c' : '#dc2626';
+              fill = isPathHead ? '#b91c1c' : '#ff6b6b';
               stroke = '#fecaca';
               strokeWidth = isPathHead ? 3 : 2;
             } else if (isStart) {
               fill = '#15803d';
-              stroke = '#bbf7d0';
+              stroke = '#4ade80';
               strokeWidth = 2;
             } else if (isPathHead) {
-              fill = '#4f46e5';
-              stroke = '#e0e7ff';
+              fill = '#7c6cff';
+              stroke = '#c4b5fd';
               strokeWidth = 3;
             } else if (inPath) {
-              fill = '#4338ca';
+              fill = '#5b4fcf';
               stroke = '#a5b4fc';
               strokeWidth = 2;
             }
@@ -691,14 +752,14 @@ const styles = StyleSheet.create({
     width: '100%',
   },
   boardContainer: {
-    backgroundColor: '#ffffff',
+    backgroundColor: '#1a1a28',
     borderRadius: 16,
     borderWidth: 2,
-    borderColor: '#cbd5e1',
+    borderColor: '#2a2a3a',
     overflow: 'hidden',
-    shadowColor: '#0f172a',
+    shadowColor: '#000',
     shadowOffset: { width: 0, height: 6 },
-    shadowOpacity: 0.1,
+    shadowOpacity: 0.35,
     shadowRadius: 12,
     elevation: 5,
   },
@@ -713,18 +774,18 @@ const styles = StyleSheet.create({
     backgroundColor: 'transparent',
   },
   startCellBackground: {
-    backgroundColor: '#dcfce7',
+    backgroundColor: 'rgba(74, 222, 128, 0.18)',
   },
   pathCellBackground: {
-    backgroundColor: '#eef2ff',
+    backgroundColor: 'rgba(124, 108, 255, 0.18)',
   },
   pathHeadCellBackground: {
-    backgroundColor: '#e0e7ff',
+    backgroundColor: 'rgba(124, 108, 255, 0.32)',
   },
   pathWrongCellBackground: {
-    backgroundColor: '#fee2e2',
+    backgroundColor: 'rgba(255, 107, 107, 0.2)',
   },
   pathWrongHeadCellBackground: {
-    backgroundColor: '#fecaca',
+    backgroundColor: 'rgba(255, 107, 107, 0.35)',
   },
 });

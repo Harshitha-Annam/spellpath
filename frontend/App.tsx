@@ -6,12 +6,11 @@ import {
   StatusBar,
   StyleSheet,
   Text,
-  useColorScheme,
   View,
 } from 'react-native';
 import { SafeAreaView, useSafeAreaInsets } from 'react-native-safe-area-context';
 import { AppMode, Difficulty, PuzzleData, GridPos, ScoreResult } from './src/types';
-import { fetchGeneratedPuzzle, fetchBuiltPuzzle, scorePuzzleSolve, ensureCustomApiBaseLoaded } from './src/api';
+import { fetchGeneratedPuzzle, fetchBuiltPuzzle, scorePuzzleSolve } from './src/api';
 import { generatePuzzle } from './src/puzzleGenerator';
 import {
   loadPuzzleStats,
@@ -36,13 +35,12 @@ const EMPTY_STATS: PuzzleRunStats = {
 };
 
 export default function App() {
-  const isDarkMode = useColorScheme() === 'dark';
   const insets = useSafeAreaInsets();
   const [mode, setMode] = useState<AppMode>('solo');
 
   const [difficulty, setDifficulty] = useState<Difficulty>('easy');
-  const [puzzle, setPuzzle] = useState<PuzzleData>(() => generatePuzzle('easy'));
-  const [path, setPath] = useState<GridPos[]>([{ row: 0, col: 0 }]);
+  const [puzzle, setPuzzle] = useState<PuzzleData | null>(null);
+  const [path, setPath] = useState<GridPos[]>([]);
   const [isGenerating, setIsGenerating] = useState(false);
   const [isBuilding, setIsBuilding] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -68,7 +66,6 @@ export default function App() {
   const statsRef = useRef<PuzzleRunStats>(EMPTY_STATS);
   const scoredPuzzleIdsRef = useRef<Set<string>>(new Set());
   const scoreCacheRef = useRef<Map<string, ScoreResult>>(new Map());
-  const didSeedPath = useRef(false);
   const abortRef = useRef<AbortController | null>(null);
   const scoreAbortRef = useRef<AbortController | null>(null);
 
@@ -78,10 +75,6 @@ export default function App() {
       abortRef.current?.abort();
       scoreAbortRef.current?.abort();
     };
-  }, []);
-
-  useEffect(() => {
-    void ensureCustomApiBaseLoaded();
   }, []);
 
   useEffect(() => {
@@ -111,15 +104,6 @@ export default function App() {
     const total = await revokePuzzleScoreAward(newPuzzle.id);
     setSessionScore(total);
   }, []);
-
-  // Seed path + stats for the initial local puzzle (no API on launch).
-  useEffect(() => {
-    if (!didSeedPath.current) {
-      didSeedPath.current = true;
-      setPath([puzzle.startCell]);
-      void beginPuzzleRun(puzzle);
-    }
-  }, [puzzle, beginPuzzleRun]);
 
   const applyPuzzle = useCallback(
     (newPuzzle: PuzzleData) => {
@@ -186,7 +170,7 @@ export default function App() {
           message.includes('Failed to fetch');
         setError(
           isNetwork
-            ? 'Could not reach the puzzle server — showing a local puzzle. Start the backend on port 8000 (`uvicorn main:app --reload --host 0.0.0.0`).'
+            ? `Could not reach the puzzle server at st-games.onrender.com — showing a local puzzle.`
             : message,
         );
       } finally {
@@ -230,7 +214,7 @@ export default function App() {
           message.includes('Failed to fetch');
         setError(
           isNetwork
-            ? 'Could not reach the puzzle server — showing a local puzzle. Start the backend on port 8000 (`uvicorn main:app --reload --host 0.0.0.0`).'
+            ? `Could not reach the puzzle server at st-games.onrender.com — showing a local puzzle.`
             : message,
         );
       } finally {
@@ -245,6 +229,9 @@ export default function App() {
   // Hydrate stats if secure storage already has values for this puzzle id
   // (e.g. after a fast refresh mid-run). New puzzles go through beginPuzzleRun.
   useEffect(() => {
+    if (!puzzle) {
+      return;
+    }
     let cancelled = false;
     void (async () => {
       const stored = await loadPuzzleStats(puzzle.id);
@@ -259,12 +246,10 @@ export default function App() {
     return () => {
       cancelled = true;
     };
-  }, [puzzle.id]);
+  }, [puzzle]);
 
   const handleSelectDifficulty = (newDiff: Difficulty) => {
     setDifficulty(newDiff);
-    // Local board only — API runs when the user taps Generate Puzzle.
-    applyPuzzle(generatePuzzle(newDiff));
     setError(null);
   };
 
@@ -411,6 +396,7 @@ export default function App() {
         isGenerating={isGenerating}
         isBuilding={isBuilding}
         sessionScore={sessionScore}
+        hasPuzzle={!!puzzle}
         onOpenDuel={() => setMode('duel')}
         onOpenLiveDuel={() => setMode('liveDuel')}
       />
@@ -442,7 +428,7 @@ export default function App() {
             />
             {(isGenerating || isBuilding) ? (
               <View style={styles.loadingOverlay} pointerEvents="none">
-                <ActivityIndicator size="large" color="#4f46e5" />
+                <ActivityIndicator size="large" color="#7c6cff" />
                 <Text style={styles.loadingText}>
                   {isBuilding ? 'Building puzzle…' : 'Generating puzzle…'}
                 </Text>
@@ -450,10 +436,20 @@ export default function App() {
             ) : null}
           </View>
         </View>
+      ) : isGenerating || isBuilding ? (
+        <View style={styles.emptyBoard}>
+          <ActivityIndicator size="large" color="#7c6cff" />
+          <Text style={styles.loadingText}>
+            {isBuilding ? 'Building puzzle…' : 'Generating puzzle…'}
+          </Text>
+        </View>
       ) : (
-        <View style={styles.initialLoading}>
-          <ActivityIndicator size="large" color="#4f46e5" />
-          <Text style={styles.loadingText}>Generating puzzle…</Text>
+        <View style={styles.emptyBoard}>
+          <Text style={styles.emptyTitle}>Ready when you are</Text>
+          <Text style={styles.emptyBody}>
+            Choose Easy, Medium, or Hard, then tap Generate Puzzle or Build
+            Puzzle to load a board.
+          </Text>
         </View>
       )}
     </>
@@ -461,7 +457,7 @@ export default function App() {
 
   return (
     <SafeAreaView style={styles.safeArea} edges={['top', 'left', 'right']}>
-      <StatusBar barStyle={isDarkMode ? 'light-content' : 'dark-content'} />
+      <StatusBar barStyle="light-content" />
       {mode === 'liveDuel' ? (
         <View style={[styles.screen, { paddingBottom: bottomPad }]}>
           <LiveDuelScreen
@@ -502,7 +498,7 @@ export default function App() {
 const styles = StyleSheet.create({
   safeArea: {
     flex: 1,
-    backgroundColor: '#f8fafc',
+    backgroundColor: '#0f0f18',
   },
   screen: {
     flex: 1,
@@ -514,7 +510,7 @@ const styles = StyleSheet.create({
     alignItems: 'center',
   },
   errorText: {
-    color: '#b91c1c',
+    color: '#ff6b6b',
     fontSize: 13,
     fontWeight: '600',
     textAlign: 'center',
@@ -528,20 +524,41 @@ const styles = StyleSheet.create({
   },
   loadingOverlay: {
     ...StyleSheet.absoluteFillObject,
-    backgroundColor: 'rgba(248, 250, 252, 0.55)',
+    backgroundColor: 'rgba(15, 15, 24, 0.7)',
     alignItems: 'center',
     justifyContent: 'center',
     zIndex: 30,
   },
-  initialLoading: {
-    minHeight: 240,
+  emptyBoard: {
+    minHeight: 280,
+    marginHorizontal: 20,
+    marginTop: 24,
+    paddingHorizontal: 22,
+    paddingVertical: 32,
     alignItems: 'center',
     justifyContent: 'center',
-    gap: 12,
+    backgroundColor: '#1a1a28',
+    borderRadius: 16,
+    borderWidth: 1,
+    borderColor: '#2a2a3a',
+  },
+  emptyTitle: {
+    color: '#f5f5ff',
+    fontSize: 20,
+    fontWeight: '800',
+    textAlign: 'center',
+    marginBottom: 10,
+  },
+  emptyBody: {
+    color: '#c4c4d4',
+    fontSize: 15,
+    fontWeight: '600',
+    textAlign: 'center',
+    lineHeight: 22,
   },
   loadingText: {
     marginTop: 8,
-    color: '#4338ca',
+    color: '#7c6cff',
     fontWeight: '700',
     fontSize: 14,
   },

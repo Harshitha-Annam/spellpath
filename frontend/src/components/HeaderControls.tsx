@@ -1,7 +1,6 @@
 import React from 'react';
 import { View, Text, TouchableOpacity, StyleSheet } from 'react-native';
 import { Difficulty } from '../types';
-import { ServerHostButton } from './ServerHostButton';
 
 interface Props {
   selectedDifficulty: Difficulty;
@@ -16,6 +15,8 @@ interface Props {
   sessionScore?: number;
   onOpenDuel?: () => void;
   onOpenLiveDuel?: () => void;
+  /** Reset / Show Solution only apply once a puzzle is on the board. */
+  hasPuzzle?: boolean;
 }
 
 export const HeaderControls: React.FC<Props> = ({
@@ -31,8 +32,10 @@ export const HeaderControls: React.FC<Props> = ({
   sessionScore = 0,
   onOpenDuel,
   onOpenLiveDuel,
+  hasPuzzle = false,
 }) => {
   const isBusy = isGenerating || isBuilding;
+  const boardActionsDisabled = isBusy || !hasPuzzle;
   const difficulties: { key: Difficulty; label: string }[] = [
     { key: 'easy', label: 'Easy' },
     { key: 'medium', label: 'Medium' },
@@ -42,11 +45,7 @@ export const HeaderControls: React.FC<Props> = ({
   return (
     <View style={styles.headerContainer}>
       <View style={styles.titleRow}>
-        <View style={styles.titleSpacer} />
         <Text style={styles.title}>Spell Path</Text>
-        <View style={styles.titleActions}>
-          <ServerHostButton disabled={isBusy} />
-        </View>
       </View>
       <View style={styles.scoreChip}>
         <Text style={styles.scoreLabel}>TOTAL SCORE</Text>
@@ -140,7 +139,12 @@ export const HeaderControls: React.FC<Props> = ({
         <View style={styles.actionRow}>
           <TouchableOpacity
             activeOpacity={0.8}
-            style={[styles.actionBtn, styles.resetBtn]}
+            disabled={boardActionsDisabled}
+            style={[
+              styles.actionBtn,
+              styles.resetBtn,
+              boardActionsDisabled && styles.disabledBtn,
+            ]}
             onPress={onReset}
           >
             <Text style={styles.resetBtnText}>🔄 Reset Board</Text>
@@ -149,10 +153,12 @@ export const HeaderControls: React.FC<Props> = ({
           {onShowSolution ? (
             <TouchableOpacity
               activeOpacity={0.8}
+              disabled={boardActionsDisabled}
               style={[
                 styles.actionBtn,
                 styles.solutionBtn,
                 showingSolution && styles.solutionBtnActive,
+                boardActionsDisabled && styles.disabledBtn,
               ]}
               onPress={onShowSolution}
             >
@@ -178,77 +184,67 @@ const styles = StyleSheet.create({
     paddingHorizontal: 16,
     paddingTop: 8,
     paddingBottom: 16,
-    backgroundColor: '#ffffff',
+    backgroundColor: '#0f0f18',
     borderBottomWidth: 1,
-    borderBottomColor: '#e2e8f0',
-    shadowColor: '#000',
-    shadowOffset: { width: 0, height: 2 },
-    shadowOpacity: 0.05,
-    shadowRadius: 8,
-    elevation: 3,
+    borderBottomColor: '#2a2a3a',
   },
   titleRow: {
     width: '100%',
     maxWidth: 380,
-    flexDirection: 'row',
     alignItems: 'center',
-    justifyContent: 'space-between',
-  },
-  titleSpacer: {
-    width: 36,
-  },
-  titleActions: {
-    width: 36,
-    alignItems: 'flex-end',
+    justifyContent: 'center',
   },
   title: {
-    flex: 1,
     textAlign: 'center',
     fontSize: 32,
     fontWeight: '900',
-    color: '#1e1b4b',
+    color: '#f5f5ff',
     letterSpacing: 1.2,
     textTransform: 'uppercase',
   },
   scoreChip: {
     marginTop: 8,
-    backgroundColor: '#eef2ff',
+    backgroundColor: '#1a1a28',
     borderRadius: 12,
     paddingVertical: 8,
     paddingHorizontal: 18,
     alignItems: 'center',
     marginBottom: 12,
     minWidth: 140,
+    borderWidth: 1,
+    borderColor: '#2a2a3a',
   },
   scoreLabel: {
     fontSize: 10,
     fontWeight: '800',
-    color: '#6366f1',
+    color: '#7c6cff',
     letterSpacing: 1.2,
   },
   scoreValue: {
     fontSize: 22,
     fontWeight: '900',
-    color: '#312e81',
+    color: '#f5f5ff',
     marginTop: 1,
   },
   duelBtn: {
     width: '100%',
     maxWidth: 380,
-    backgroundColor: '#0f766e',
+    backgroundColor: '#2a2a3a',
     borderRadius: 12,
     paddingVertical: 12,
     paddingHorizontal: 14,
     alignItems: 'center',
     marginBottom: 12,
+    borderWidth: 1,
+    borderColor: '#555',
   },
   duelBtnText: {
-    color: '#ffffff',
+    color: '#f5f5ff',
     fontWeight: '900',
     fontSize: 16,
   },
   liveDuelBtn: {
-    backgroundColor: '#059669',
+    backgroundColor: '#7c6cff',
     borderRadius: 12,
     paddingVertical: 12,
     paddingHorizontal: 20,
@@ -264,12 +260,14 @@ const styles = StyleSheet.create({
   },
   difficultyRow: {
     flexDirection: 'row',
-    backgroundColor: '#f1f5f9',
+    backgroundColor: '#1a1a28',
     borderRadius: 12,
     padding: 4,
     marginBottom: 14,
     width: '100%',
     maxWidth: 380,
+    borderWidth: 1,
+    borderColor: '#2a2a3a',
   },
   difficultyButton: {
     flex: 1,
@@ -278,12 +276,12 @@ const styles = StyleSheet.create({
     borderRadius: 8,
   },
   difficultyButtonActive: {
-    backgroundColor: '#6366f1',
+    backgroundColor: '#7c6cff',
   },
   difficultyText: {
     fontSize: 14,
     fontWeight: '700',
-    color: '#475569',
+    color: '#aaa',
   },
   difficultyTextActive: {
     color: '#ffffff',
@@ -306,7 +304,7 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
   },
   generateBtn: {
-    backgroundColor: '#4f46e5',
+    backgroundColor: '#7c6cff',
   },
   generateBtnText: {
     color: '#ffffff',
@@ -314,39 +312,41 @@ const styles = StyleSheet.create({
     fontSize: 14,
   },
   buildBtn: {
-    backgroundColor: '#0d9488',
+    backgroundColor: '#2a2a3a',
+    borderWidth: 1,
+    borderColor: '#555',
   },
   buildBtnText: {
-    color: '#ffffff',
+    color: '#f5f5ff',
     fontWeight: '700',
     fontSize: 14,
   },
   resetBtn: {
-    backgroundColor: '#f1f5f9',
+    backgroundColor: '#1e1e2e',
     borderWidth: 1,
-    borderColor: '#cbd5e1',
+    borderColor: '#333',
   },
   resetBtnText: {
-    color: '#334155',
+    color: '#ccc',
     fontWeight: '700',
     fontSize: 14,
   },
   solutionBtn: {
-    backgroundColor: '#fff7ed',
+    backgroundColor: '#3b2f00',
     borderWidth: 1,
-    borderColor: '#fdba74',
+    borderColor: '#fbbf24',
   },
   solutionBtnActive: {
-    backgroundColor: '#ea580c',
-    borderColor: '#c2410c',
+    backgroundColor: '#fbbf24',
+    borderColor: '#fbbf24',
   },
   solutionBtnText: {
-    color: '#9a3412',
+    color: '#fbbf24',
     fontWeight: '700',
     fontSize: 14,
   },
   solutionBtnTextActive: {
-    color: '#ffffff',
+    color: '#0f0f18',
   },
   disabledBtn: {
     opacity: 0.6,

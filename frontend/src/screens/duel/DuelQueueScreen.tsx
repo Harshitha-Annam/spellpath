@@ -15,7 +15,6 @@ import {
   joinLiveDuelQueue,
   leaveLiveDuelQueue,
 } from '../../api';
-import { ServerHostButton } from '../../components/ServerHostButton';
 import { hasSeenLiveDuelOnboarding, markLiveDuelOnboardingSeen } from '../../liveDuelOnboarding';
 import { loadLiveDuelStats, LiveDuelStats } from '../../liveDuelStatsStorage';
 import { loadPlayerProfile, savePlayerProfile } from '../../playerStorage';
@@ -223,7 +222,6 @@ export const DuelQueueScreen: React.FC<Props> = ({ onMatched, onBack, autoStart 
     <View style={styles.container}>
       <View style={styles.headerRow}>
         <Text style={styles.title}>Live Duel</Text>
-        <ServerHostButton />
       </View>
       <Text style={styles.subtitle}>Race an opponent — 2 minutes, highest score wins.</Text>
 

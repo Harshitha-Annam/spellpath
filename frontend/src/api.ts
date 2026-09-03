@@ -1,9 +1,3 @@
-import { NativeModules, Platform } from 'react-native';
-import {
-  clearCustomApiHost,
-  loadCustomApiHost,
-  saveCustomApiHost,
-} from './serverHostStorage';
 import {
   CellData,
   Difficulty,
@@ -55,8 +49,10 @@ interface ApiPuzzleResponse {
   };
 }
 
-/** Dev machine LAN IP — update if your PC IP changes (`ipconfig`). */
-export const DEV_LAN_HOST = '192.168.70.13';
+/** Hosted Spell Path API root (Render). */
+export const SPELLPATH_API_URL = 'https://st-games.onrender.com/api/spellpath';
+/** API origin used for health checks and as the fetch base URL. */
+export const PRODUCTION_API_ORIGIN = 'https://st-games.onrender.com';
 
 const API_PREFIX = '/api';
 /** Spell Path REST + WebSocket routes under `/api/spellpath`. */
@@ -82,9 +78,6 @@ const DUEL_PREPARE_POLL_MS = 40 * 60 * 1000;
 const API_BASE_CACHE_TTL_MS = 10 * 60 * 1000;
 
 let cachedApiBase: { url: string; checkedAt: number } | null = null;
-/** Optional override from the header server-IP control (persisted). */
-let customApiBase: string | null = null;
-let customApiBaseLoaded = false;
 
 function invalidateApiBaseCache(): void {
   cachedApiBase = null;
@@ -92,105 +85,6 @@ function invalidateApiBaseCache(): void {
 
 function rememberApiBase(url: string): void {
   cachedApiBase = { url, checkedAt: Date.now() };
-}
-
-/** Turn "192.168.x.x", "host:8000", or a full URL into an API base. */
-export function normalizeApiBaseInput(input: string): string | null {
-  let raw = input.trim();
-  if (!raw) {
-    return null;
-  }
-  if (!/^https?:\/\//i.test(raw)) {
-    raw = `http://${raw}`;
-  }
-  try {
-    const url = new URL(raw.replace(/\/+$/, ''));
-    if (!url.hostname) {
-      return null;
-    }
-    if (!url.port) {
-      if (url.protocol === 'http:') {
-        return `http://${url.hostname}:8000`;
-      }
-      return `${url.protocol}//${url.hostname}`;
-    }
-    return `${url.protocol}//${url.hostname}:${url.port}`;
-  } catch {
-    return null;
-  }
-}
-
-export function getCustomApiBase(): string | null {
-  return customApiBase;
-}
-
-export async function ensureCustomApiBaseLoaded(): Promise<string | null> {
-  if (customApiBaseLoaded) {
-    return customApiBase;
-  }
-  const stored = await loadCustomApiHost();
-  customApiBase = stored ? normalizeApiBaseInput(stored) : null;
-  customApiBaseLoaded = true;
-  return customApiBase;
-}
-
-export async function setCustomApiBase(input: string | null): Promise<string | null> {
-  if (!input || !input.trim()) {
-    customApiBase = null;
-    customApiBaseLoaded = true;
-    invalidateApiBaseCache();
-    await clearCustomApiHost();
-    return null;
-  }
-  const normalized = normalizeApiBaseInput(input);
-  if (!normalized) {
-    throw new Error(`Enter a valid IP or URL (e.g. ${DEV_LAN_HOST})`);
-  }
-  customApiBase = normalized;
-  customApiBaseLoaded = true;
-  invalidateApiBaseCache();
-  await saveCustomApiHost(normalized);
-  return normalized;
-}
-
-function getCandidateBaseUrls(): string[] {
-  const urls: string[] = [];
-  const push = (url: string) => {
-    if (!urls.includes(url)) {
-      urls.push(url);
-    }
-  };
-
-  // USB dev: `adb reverse tcp:8000 tcp:8000` tunnels the phone's localhost → PC.
-  if (Platform.OS === 'android') {
-    push('http://127.0.0.1:8000');
-  }
-
-  if (customApiBase) {
-    push(customApiBase);
-  }
-
-  const sourceCode = NativeModules.SourceCode as { scriptURL?: string } | undefined;
-  const scriptURL = sourceCode?.scriptURL;
-  const match = scriptURL?.match(/https?:\/\/([^:/]+)/);
-  const metroHost = match?.[1];
-
-  if (metroHost && metroHost !== 'localhost' && metroHost !== '127.0.0.1') {
-    push(`http://${metroHost}:8000`);
-  }
-
-  push(`http://${DEV_LAN_HOST}:8000`);
-
-  if (Platform.OS === 'android') {
-    push('http://10.0.2.2:8000');
-  }
-
-  if (Platform.OS !== 'android') {
-    push('http://127.0.0.1:8000');
-    push('http://localhost:8000');
-  }
-
-  return urls;
 }
 
 function normalizeDifficulty(
@@ -361,51 +255,7 @@ async function probeApiBase(base: string, signal?: AbortSignal): Promise<string>
   return base;
 }
 
-/** First successful probe wins; rejects when every candidate fails. */
-async function raceApiProbes(
-  candidates: string[],
-  signal?: AbortSignal,
-): Promise<{ base: string; errors: string[] }> {
-  const errors: string[] = [];
-
-  return new Promise((resolve, reject) => {
-    if (candidates.length === 0) {
-      reject({ errors });
-      return;
-    }
-
-    let pending = candidates.length;
-
-    const finishFailure = (base: string, err: unknown) => {
-      const message = err instanceof Error ? err.message : String(err);
-      const timedOut =
-        (err instanceof Error && err.name === 'AbortError') ||
-        message.toLowerCase().includes('timeout') ||
-        message.toLowerCase().includes('timed out');
-      errors.push(`${base} → ${timedOut ? 'timeout' : message}`);
-      pending -= 1;
-      if (pending === 0) {
-        reject({ errors });
-      }
-    };
-
-    for (const base of candidates) {
-      void probeApiBase(base, signal)
-        .then((winner) => resolve({ base: winner, errors }))
-        .catch((err) => {
-          if (signal?.aborted) {
-            reject(err);
-            return;
-          }
-          finishFailure(base, err);
-        });
-    }
-  });
-}
-
 async function resolveLiveApiBase(signal?: AbortSignal): Promise<string> {
-  await ensureCustomApiBaseLoaded();
-
   const now = Date.now();
   if (
     cachedApiBase &&
@@ -425,66 +275,24 @@ async function resolveLiveApiBase(signal?: AbortSignal): Promise<string> {
     }
   }
 
-  const candidates = getCandidateBaseUrls();
-  if (cachedApiBase?.url) {
-    const idx = candidates.indexOf(cachedApiBase.url);
-    if (idx > 0) {
-      candidates.splice(idx, 1);
-      candidates.unshift(cachedApiBase.url);
-    }
-  }
-
   if (signal?.aborted) {
     throw createAbortError();
   }
 
-  const errors: string[] = [];
-
   try {
-    const result = await raceApiProbes(candidates, signal);
-    rememberApiBase(result.base);
-    return result.base;
+    await probeApiBase(PRODUCTION_API_ORIGIN, signal);
+    rememberApiBase(PRODUCTION_API_ORIGIN);
+    return PRODUCTION_API_ORIGIN;
   } catch (err) {
     if (signal?.aborted) {
       throw err instanceof Error ? err : createAbortError();
     }
-    if (err && typeof err === 'object' && 'errors' in err) {
-      const listed = (err as { errors: string[] }).errors;
-      if (listed.length) {
-        errors.push(...listed);
-      }
-    }
+    invalidateApiBaseCache();
+    const detail = err instanceof Error ? err.message : String(err);
+    throw new Error(
+      `Could not reach the puzzle server at ${SPELLPATH_API_URL} (${detail}).`,
+    );
   }
-
-  invalidateApiBaseCache();
-  throw new Error(
-    [
-      'Could not reach the puzzle server.',
-      Platform.OS === 'android'
-        ? 'Phone over USB: run `adb reverse tcp:8000 tcp:8000` then reload the app.'
-        : null,
-      `Wi‑Fi: tap ⚙ and save ${DEV_LAN_HOST}, and allow port 8000 in Windows Firewall.`,
-      'Tried:',
-      ...errors,
-    ]
-      .filter(Boolean)
-      .join('\n'),
-  );
-}
-
-/** Test a specific server URL (for the ⚙ settings dialog). */
-export async function testApiConnection(input?: string): Promise<string> {
-  if (input?.trim()) {
-    const base = normalizeApiBaseInput(input);
-    if (!base) {
-      throw new Error(`Enter a valid IP or URL (e.g. ${DEV_LAN_HOST})`);
-    }
-    return probeApiBase(base);
-  }
-
-  await ensureCustomApiBaseLoaded();
-  const result = await raceApiProbes(getCandidateBaseUrls());
-  return result.base;
 }
 
 /**

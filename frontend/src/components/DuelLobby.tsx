@@ -9,7 +9,6 @@ import {
 } from 'react-native';
 import { formatDuration } from '../api';
 import { DuelInfo, PlayerProfile } from '../types';
-import { ServerHostButton } from './ServerHostButton';
 
 interface Props {
   player: PlayerProfile | null;
@@ -55,7 +54,6 @@ export const DuelLobby: React.FC<Props> = ({
         <TouchableOpacity onPress={onBackToSolo} style={styles.backBtn}>
           <Text style={styles.backText}>← Solo mode</Text>
         </TouchableOpacity>
-        <ServerHostButton disabled={isBusy} />
       </View>
 
       <Text style={styles.title}>Spellpath Combat</Text>
@@ -75,7 +73,7 @@ export const DuelLobby: React.FC<Props> = ({
             value={name}
             onChangeText={setName}
             placeholder="Your name"
-            placeholderTextColor="#94a3b8"
+            placeholderTextColor="#888"
             maxLength={24}
             autoCapitalize="words"
             style={styles.input}
@@ -123,7 +121,7 @@ export const DuelLobby: React.FC<Props> = ({
             value={code}
             onChangeText={(v) => setCode(v.toUpperCase())}
             placeholder="Challenge code"
-            placeholderTextColor="#94a3b8"
+            placeholderTextColor="#888"
             autoCapitalize="characters"
             maxLength={8}
             style={styles.input}
@@ -167,7 +165,7 @@ export const DuelLobby: React.FC<Props> = ({
 
           {preparing ? (
             <View style={styles.prepBox}>
-              <ActivityIndicator color="#0f766e" />
+              <ActivityIndicator color="#7c6cff" />
               <View style={styles.prepCopy}>
                 <Text style={styles.prepText}>
                   Generating puzzle pack with DeepSeek…
@@ -228,50 +226,50 @@ const styles = StyleSheet.create({
     paddingVertical: 6,
   },
   backText: {
-    color: '#0f766e',
+    color: '#7c6cff',
     fontWeight: '700',
     fontSize: 14,
   },
   title: {
     fontSize: 28,
     fontWeight: '900',
-    color: '#134e4a',
+    color: '#f5f5ff',
     letterSpacing: 0.5,
   },
   subtitle: {
     marginTop: 6,
     marginBottom: 16,
-    color: '#475569',
+    color: '#aaa',
     fontSize: 14,
     lineHeight: 20,
   },
   card: {
-    backgroundColor: '#ffffff',
+    backgroundColor: '#1a1a28',
     borderRadius: 14,
     padding: 16,
     borderWidth: 1,
-    borderColor: '#ccfbf1',
+    borderColor: '#2a2a3a',
     marginBottom: 12,
     gap: 10,
   },
   cardLabel: {
     fontSize: 11,
     fontWeight: '800',
-    color: '#0f766e',
+    color: '#7c6cff',
     letterSpacing: 1.1,
   },
   input: {
     borderWidth: 1,
-    borderColor: '#cbd5e1',
+    borderColor: '#333',
     borderRadius: 10,
     paddingHorizontal: 12,
     paddingVertical: 10,
     fontSize: 16,
-    color: '#0f172a',
-    backgroundColor: '#f8fafc',
+    color: '#fff',
+    backgroundColor: '#1e1e2e',
   },
   primaryBtn: {
-    backgroundColor: '#0f766e',
+    backgroundColor: '#7c6cff',
     borderRadius: 10,
     paddingVertical: 12,
     alignItems: 'center',
@@ -282,21 +280,21 @@ const styles = StyleSheet.create({
     fontSize: 15,
   },
   secondaryBtn: {
-    backgroundColor: '#ecfdf5',
+    backgroundColor: '#2a2a3a',
     borderRadius: 10,
     paddingVertical: 12,
     alignItems: 'center',
     borderWidth: 1,
-    borderColor: '#99f6e4',
+    borderColor: '#555',
   },
   secondaryBtnText: {
-    color: '#115e59',
+    color: '#f5f5ff',
     fontWeight: '800',
     fontSize: 15,
   },
   orText: {
     textAlign: 'center',
-    color: '#64748b',
+    color: '#888',
     fontWeight: '600',
     marginVertical: 4,
   },
@@ -309,30 +307,30 @@ const styles = StyleSheet.create({
   },
   playerChip: {
     flex: 1,
-    backgroundColor: '#ecfdf5',
+    backgroundColor: '#1e1e2e',
     borderRadius: 999,
     paddingHorizontal: 14,
     paddingVertical: 8,
     borderWidth: 1,
-    borderColor: '#99f6e4',
+    borderColor: '#333',
   },
   playerLabel: {
     fontSize: 10,
     fontWeight: '700',
-    color: '#0f766e',
+    color: '#7c6cff',
     letterSpacing: 0.8,
   },
   playerName: {
     fontSize: 16,
     fontWeight: '800',
-    color: '#134e4a',
+    color: '#f5f5ff',
   },
   switchBtn: {
     paddingHorizontal: 12,
     paddingVertical: 10,
   },
   switchBtnText: {
-    color: '#0f766e',
+    color: '#7c6cff',
     fontWeight: '800',
     fontSize: 13,
   },
@@ -340,57 +338,57 @@ const styles = StyleSheet.create({
     fontSize: 34,
     fontWeight: '900',
     letterSpacing: 4,
-    color: '#134e4a',
+    color: '#f5f5ff',
   },
   hint: {
-    color: '#64748b',
+    color: '#888',
     fontSize: 13,
   },
   championBanner: {
-    backgroundColor: '#fffbeb',
+    backgroundColor: '#3b2f00',
     borderRadius: 12,
     padding: 14,
     borderWidth: 1,
-    borderColor: '#fcd34d',
+    borderColor: '#fbbf24',
     alignItems: 'center',
   },
   championEyebrow: {
     fontSize: 11,
     fontWeight: '800',
-    color: '#b45309',
+    color: '#fbbf24',
     letterSpacing: 1.2,
   },
   championName: {
     marginTop: 4,
     fontSize: 20,
     fontWeight: '900',
-    color: '#92400e',
+    color: '#f5f5ff',
   },
   championScore: {
     fontSize: 28,
     fontWeight: '900',
-    color: '#78350f',
+    color: '#fbbf24',
   },
   championMeta: {
     marginTop: 2,
-    color: '#a16207',
+    color: '#ccc',
     fontWeight: '600',
   },
   openBanner: {
-    backgroundColor: '#f0fdfa',
+    backgroundColor: '#1e1e2e',
     borderRadius: 12,
     padding: 14,
     borderWidth: 1,
-    borderColor: '#99f6e4',
+    borderColor: '#2a2a3a',
   },
   openTitle: {
     fontWeight: '800',
-    color: '#115e59',
+    color: '#f5f5ff',
     fontSize: 16,
   },
   openSub: {
     marginTop: 2,
-    color: '#0f766e',
+    color: '#aaa',
   },
   prepBox: {
     flexDirection: 'row',
@@ -402,17 +400,17 @@ const styles = StyleSheet.create({
     flex: 1,
   },
   prepText: {
-    color: '#0f766e',
+    color: '#7c6cff',
     fontWeight: '700',
   },
   prepSub: {
     marginTop: 2,
-    color: '#64748b',
+    color: '#888',
     fontWeight: '600',
     fontSize: 12,
   },
   errorText: {
-    color: '#b91c1c',
+    color: '#ff6b6b',
     fontWeight: '700',
     marginTop: 8,
   },
