@@ -20,7 +20,7 @@ from spell_path.services.live_duels.puzzles import ensure_puzzle_at_index, publi
 logger = logging.getLogger("live_duels.ws")
 
 COUNTDOWN_SEC = 3
-DUEL_DURATION_SEC = 120
+DUEL_DURATION_SEC = 60
 
 
 async def _send_json(ws: WebSocket, payload: dict) -> None:
@@ -115,8 +115,15 @@ async def _send_duel_info(duel: Duel, player: PlayerState) -> None:
         player,
         {
             "type": "duel_info",
+            "you": {
+                "display_name": player.display_name,
+                "user_id": player.user_id,
+            },
             "opponent": {
                 "display_name": opponent.display_name if opponent else "Opponent",
+                "user_id": opponent.user_id if opponent else None,
+                "connected": bool(opponent and opponent.connected),
+                "ready": bool(opponent and opponent.connected),
             },
         },
     )
@@ -154,6 +161,8 @@ async def _send_resync(duel: Duel, player: PlayerState) -> None:
                 "solved": opponent.puzzles_solved if opponent else 0,
                 "score": opponent.score if opponent else 0,
                 "display_name": opponent.display_name if opponent else "Opponent",
+                "connected": bool(opponent and opponent.connected),
+                "ready": bool(opponent and opponent.connected),
             },
         },
     )
@@ -284,7 +293,11 @@ async def _start_countdown(duel_id: str) -> None:
         if active_duel.is_bot_duel:
             asyncio.create_task(_run_bot_opponent(duel_id))
 
-    asyncio.create_task(_after_countdown())
+    task = asyncio.create_task(_after_countdown())
+    stored = await live_duel_manager.get_duel(duel_id)
+    if stored:
+        stored.countdown_task = task
+
 
 
 async def _run_bot_opponent(duel_id: str) -> None:
@@ -348,6 +361,8 @@ async def _run_bot_opponent(duel_id: str) -> None:
                     "solved": bot.puzzles_solved,
                     "score": bot.score,
                     "display_name": bot.display_name,
+                    "connected": True,
+                    "ready": True,
                 },
             )
 
@@ -368,7 +383,26 @@ async def _handle_forfeit(duel: Duel, player: PlayerState) -> None:
     if duel.ended:
         await _send_to_player(player, duel_end_payload(duel))
         return
-    finished = await live_duel_manager.forfeit_duel(duel.id, player.user_id, reason="forfeit")
+    reason = (
+        "abort"
+        if duel.status in (DuelStatus.WAITING, DuelStatus.COUNTDOWN)
+        else "forfeit"
+    )
+    finished = await live_duel_manager.forfeit_duel(duel.id, player.user_id, reason=reason)
+    if finished:
+        payload = duel_end_payload(finished)
+        await _send_to_player(player, payload)
+        await _broadcast(finished, payload, exclude_user_id=player.user_id)
+
+
+async def _handle_abort(duel: Duel, player: PlayerState) -> None:
+    if duel.ended:
+        await _send_to_player(player, duel_end_payload(duel))
+        return
+    if duel.status == DuelStatus.ACTIVE:
+        await _handle_forfeit(duel, player)
+        return
+    finished = await live_duel_manager.abort_duel(duel.id, player.user_id)
     if finished:
         payload = duel_end_payload(finished)
         await _send_to_player(player, payload)
@@ -490,6 +524,8 @@ async def _handle_submit(duel: Duel, player: PlayerState, message: dict) -> None
                 "solved": player.puzzles_solved,
                 "score": player.score,
                 "display_name": player.display_name,
+                "connected": True,
+                "ready": True,
             },
         )
 
@@ -552,6 +588,9 @@ async def live_duel_ws(websocket: WebSocket, duel_id: str, user_id: str) -> None
                 await _handle_submit(fresh, player, message)
             elif msg_type == "forfeit":
                 await _handle_forfeit(fresh, player)
+                break
+            elif msg_type == "abort":
+                await _handle_abort(fresh, player)
                 break
             elif msg_type == "rematch_request":
                 await _handle_rematch_request(fresh, player, message)

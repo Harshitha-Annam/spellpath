@@ -10,6 +10,7 @@ import {
   createDuel,
   createPlayer,
   fetchDuel,
+  fetchDuelLeaderboard,
   fetchDuelPuzzles,
   fetchPlayer,
   fetchRevealedDuelPuzzles,
@@ -94,6 +95,9 @@ export const DuelScreen: React.FC<Props> = ({
   const [scoreResult, setScoreResult] = useState<ScoreResult | null>(null);
   const [scorePending, setScorePending] = useState(false);
   const [elapsedMs, setElapsedMs] = useState(0);
+  /** Board index freezes during the post-solve delay so the next puzzle
+   *  does not briefly render the previous completed path (red flash). */
+  const [boardIndex, setBoardIndex] = useState(0);
 
   const puzzleStartedAtRef = useRef<number>(Date.now());
   const submittingRef = useRef(false);
@@ -149,8 +153,7 @@ export const DuelScreen: React.FC<Props> = ({
     [player],
   );
 
-  const currentIndex = attempt?.current_index ?? 0;
-  const puzzle = puzzles[currentIndex] ?? null;
+  const puzzle = puzzles[boardIndex] ?? null;
 
   useEffect(() => {
     if (phase !== 'playing' || !attempt || attempt.status !== 'in_progress') {
@@ -160,9 +163,10 @@ export const DuelScreen: React.FC<Props> = ({
       setElapsedMs(Date.now() - puzzleStartedAtRef.current);
     }, 250);
     return () => clearInterval(timer);
-  }, [phase, attempt, currentIndex]);
+  }, [phase, attempt, boardIndex]);
 
-  const beginPuzzle = useCallback((nextPuzzle: PuzzleData) => {
+  const beginPuzzle = useCallback((nextPuzzle: PuzzleData, index: number) => {
+    setBoardIndex(index);
     setPath([nextPuzzle.startCell]);
     setMisses(0);
     setBacktracks(0);
@@ -173,6 +177,23 @@ export const DuelScreen: React.FC<Props> = ({
     puzzleStartedAtRef.current = Date.now();
     setElapsedMs(0);
   }, []);
+
+  const loadLeaderboard = useCallback(
+    async (duelId: string, signal?: AbortSignal) => {
+      try {
+        const board = await fetchDuelLeaderboard(duelId, undefined, signal);
+        if (signal?.aborted) {
+          return;
+        }
+        setLeaderboard(board);
+      } catch {
+        if (!signal?.aborted) {
+          // Lobby still works without standings if the fetch fails.
+        }
+      }
+    },
+    [],
+  );
 
   const finishOrAdvance = useCallback(
     async (
@@ -211,9 +232,10 @@ export const DuelScreen: React.FC<Props> = ({
       if (signal.aborted) {
         return;
       }
-      const nextPuzzle = pack[response.attempt.current_index];
+      const nextIndex = response.attempt.current_index;
+      const nextPuzzle = pack[nextIndex];
       if (nextPuzzle) {
-        beginPuzzle(nextPuzzle);
+        beginPuzzle(nextPuzzle, nextIndex);
       }
     },
     [beginPuzzle],
@@ -263,12 +285,14 @@ export const DuelScreen: React.FC<Props> = ({
     abortRef.current = controller;
     setIsBusy(true);
     setError(null);
+    setLeaderboard(null);
     try {
       const active = await ensurePlayer(controller.signal);
       let next = await createDuel(active.id, controller.signal);
       setDuel(next);
       next = await waitForDuelReady(next.id, controller.signal, setDuel);
       setDuel(next);
+      await loadLeaderboard(next.id, controller.signal);
     } catch (err) {
       if (!(err instanceof Error && err.name === 'AbortError')) {
         setError(err instanceof Error ? err.message : 'Could not create spellpath combat');
@@ -284,6 +308,7 @@ export const DuelScreen: React.FC<Props> = ({
     abortRef.current = controller;
     setIsBusy(true);
     setError(null);
+    setLeaderboard(null);
     try {
       // Join needs a live player before starting the run; validate early.
       await ensurePlayer(controller.signal);
@@ -296,6 +321,7 @@ export const DuelScreen: React.FC<Props> = ({
       if (next.status === 'failed') {
         throw new Error(next.error || 'This spellpath combat failed to prepare');
       }
+      await loadLeaderboard(next.id, controller.signal);
     } catch (err) {
       if (!(err instanceof Error && err.name === 'AbortError')) {
         setError(err instanceof Error ? err.message : 'Could not join spellpath combat');
@@ -329,9 +355,10 @@ export const DuelScreen: React.FC<Props> = ({
       setDuel(freshDuel);
       setLeaderboard(null);
       setPhase('playing');
-      const startPuzzle = pack[nextAttempt.current_index];
+      const startIndex = nextAttempt.current_index;
+      const startPuzzle = pack[startIndex];
       if (startPuzzle) {
-        beginPuzzle(startPuzzle);
+        beginPuzzle(startPuzzle, startIndex);
       }
     } catch (err) {
       if (!(err instanceof Error && err.name === 'AbortError')) {
@@ -375,7 +402,7 @@ export const DuelScreen: React.FC<Props> = ({
         try {
           const response = await submitDuelPuzzle(
             attempt.id,
-            currentIndex,
+            boardIndex,
             {
               path: opts.skipped ? [] : path,
               misses: statsRef.current.misses,
@@ -401,7 +428,7 @@ export const DuelScreen: React.FC<Props> = ({
         }
       })();
     },
-    [attempt, puzzle, currentIndex, path, puzzles, finishOrAdvance],
+    [attempt, puzzle, boardIndex, path, puzzles, finishOrAdvance],
   );
 
   const handleSkip = useCallback(() => {
@@ -442,12 +469,19 @@ export const DuelScreen: React.FC<Props> = ({
         player={player}
         suggestedName={suggestedName}
         duel={duel}
+        leaderboard={leaderboard}
         isBusy={isBusy}
         error={error}
         onRegister={(name) => void handleRegister(name)}
         onSwitchPlayer={handleSwitchPlayer}
         onCreateDuel={() => void handleCreateDuel()}
         onJoinDuel={(code) => void handleJoinDuel(code)}
+        onRefreshLeaderboard={() => {
+          if (!duel) {
+            return;
+          }
+          void loadLeaderboard(duel.id);
+        }}
         onStartRun={() => void launchRun()}
         onBackToSolo={onBackToSolo}
       />
@@ -472,6 +506,7 @@ export const DuelScreen: React.FC<Props> = ({
             void fetchDuel(duel.id)
               .then(setDuel)
               .catch(() => undefined);
+            void loadLeaderboard(duel.id);
           }
         }}
         onBackToSolo={onBackToSolo}
@@ -493,7 +528,7 @@ export const DuelScreen: React.FC<Props> = ({
       <DuelProgress
         attempt={attempt}
         champion={duel?.champion ?? null}
-        puzzleIndex={currentIndex}
+        puzzleIndex={boardIndex}
         elapsedMs={elapsedMs}
       />
       {error ? <Text style={styles.errorText}>{error}</Text> : null}
@@ -513,7 +548,7 @@ export const DuelScreen: React.FC<Props> = ({
       />
       <View style={styles.boardSection}>
         <GameBoard
-          key={`${attempt.id}-${puzzle.id}-${currentIndex}`}
+          key={`${attempt.id}-${puzzle.id}-${boardIndex}`}
           puzzle={puzzle}
           path={path}
           onPathChange={setPath}

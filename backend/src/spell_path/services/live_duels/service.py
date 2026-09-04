@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from core.exceptions import ForfeitConflict, LiveDuelNotFound
+from spell_path.schemas.live_duels import DuelStatus
 from spell_path.services.live_duels import manager as live_duel_manager
 from spell_path.validators.live_duels import BotDuelBody, ForfeitBody, QueueJoinBody, QueueLeaveBody
 
@@ -20,6 +21,33 @@ async def forfeit_live_duel(duel_id: str, body: ForfeitBody):
         return payload
 
     finished = await live_duel_manager.forfeit_duel(duel_id, body.user_id, reason="forfeit")
+    if not finished:
+        raise ForfeitConflict()
+
+    await notify_duel_end(finished)
+    payload = duel_end_payload(finished)
+    payload.pop("type", None)
+    return payload
+
+
+async def abort_live_duel(duel_id: str, body: ForfeitBody):
+    """Leave before the duel starts — cancels match, no scoreboard."""
+    from spell_path.ws_handlers.live_duels import duel_end_payload, notify_duel_end
+
+    duel = await live_duel_manager.get_duel(duel_id)
+    if not duel or body.user_id not in duel.players:
+        raise LiveDuelNotFound()
+
+    if duel.ended:
+        payload = duel_end_payload(duel)
+        payload.pop("type", None)
+        return payload
+
+    if duel.status == DuelStatus.ACTIVE:
+        # Already playing — treat as forfeit so opponent gets a proper result.
+        return await forfeit_live_duel(duel_id, body)
+
+    finished = await live_duel_manager.abort_duel(duel_id, body.user_id)
     if not finished:
         raise ForfeitConflict()
 

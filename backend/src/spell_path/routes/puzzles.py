@@ -51,12 +51,20 @@ def build_puzzle_endpoint(
     difficulty: str = Query("medium", description="Difficulty level: easy, medium, hard"),
     grid_size: Optional[int] = Query(None, ge=5, le=9, description="Size of the grid (5, 7, or 9)"),
     word: Optional[str] = Query(None, description="Optional target word for milestones"),
+    path_complexity: Optional[float] = Query(
+        None,
+        ge=0,
+        le=100,
+        description="Hamiltonian path twistiness from 0 (snake-like) to 100 (highly woven). "
+        "Defaults by difficulty: easy=30, medium=50, hard=70.",
+    ),
 ):
     """
     Procedural puzzle builder (no LLM).
     Uses backbite Hamiltonian paths, milestone placement, and iterative wall validation.
+    path_complexity controls solution-path shape; difficulty still controls size/walls.
     """
-    return puzzle_controller.build_puzzle(difficulty, grid_size, word)
+    return puzzle_controller.build_puzzle(difficulty, grid_size, word, path_complexity)
 
 
 @router.get("/generate-puzzle")

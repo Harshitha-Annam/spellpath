@@ -19,6 +19,7 @@ import { hasSeenLiveDuelOnboarding, markLiveDuelOnboardingSeen } from '../../liv
 import { loadLiveDuelStats, LiveDuelStats } from '../../liveDuelStatsStorage';
 import { loadPlayerProfile, savePlayerProfile } from '../../playerStorage';
 import { PlayerProfile } from '../../types';
+import { PlayerAvatar } from '../../components/PlayerAvatar';
 import { useDuelSocket } from './DuelSocketContext';
 
 interface Props {
@@ -220,10 +221,14 @@ export const DuelQueueScreen: React.FC<Props> = ({ onMatched, onBack, autoStart 
 
   return (
     <View style={styles.container}>
-      <View style={styles.headerRow}>
-        <Text style={styles.title}>Live Duel</Text>
+      <View style={styles.brandBlock}>
+        <Text style={styles.brandTitle}>Jupiter</Text>
+        <Text style={styles.brandTagline}>Your money companion</Text>
       </View>
-      <Text style={styles.subtitle}>Race an opponent — 2 minutes, highest score wins.</Text>
+      <View style={styles.headerRow}>
+        <Text style={styles.title}>Live Duels</Text>
+      </View>
+      <Text style={styles.subtitle}>Race an opponent — 60 seconds, highest score wins.</Text>
 
       {recordLine ? <Text style={styles.recordLine}>{recordLine}</Text> : null}
 
@@ -238,14 +243,17 @@ export const DuelQueueScreen: React.FC<Props> = ({ onMatched, onBack, autoStart 
           maxLength={24}
         />
       ) : (
-        <Text style={styles.playerLabel}>Playing as {player.name}</Text>
+        <View style={styles.playerRow}>
+          <PlayerAvatar name={player.name} size={40} />
+          <Text style={styles.playerLabel}>Playing as {player.name}</Text>
+        </View>
       )}
 
       {error ? <Text style={styles.error}>{error}</Text> : null}
 
       {waiting ? (
         <View style={styles.waitingBox}>
-          <ActivityIndicator size="large" color="#7c6cff" />
+          <ActivityIndicator size="large" color="#e85a3c" />
           {matchedOpponent ? (
             <>
               <Text style={styles.matchedText}>Matched with {matchedOpponent}!</Text>
@@ -270,7 +278,7 @@ export const DuelQueueScreen: React.FC<Props> = ({ onMatched, onBack, autoStart 
       )}
 
       <TouchableOpacity style={styles.secondaryBtn} onPress={() => void handleCancel()}>
-        <Text style={styles.secondaryBtnText}>{waiting ? 'Cancel' : 'Back'}</Text>
+        <Text style={styles.secondaryBtnText}>{waiting ? 'Quit' : 'Back'}</Text>
       </TouchableOpacity>
 
       <Modal visible={showOnboarding} transparent animationType="fade">
@@ -278,8 +286,8 @@ export const DuelQueueScreen: React.FC<Props> = ({ onMatched, onBack, autoStart 
           <View style={styles.modalSheet}>
             <Text style={styles.modalTitle}>How Live Duel works</Text>
             <Text style={styles.modalBody}>
-              • You have 2 minutes to solve as many puzzles as possible{'\n'}
-              • The target word is hidden — trace the path through letters{'\n'}
+              • You have 60 seconds to solve as many puzzles as possible{'\n'}
+              • Read the clue, then connect letters on the board{'\n'}
               • Puzzles get harder as you progress{'\n'}
               • Highest total score wins
             </Text>
@@ -298,6 +306,20 @@ const styles = StyleSheet.create({
     padding: 20,
     gap: 16,
   },
+  brandBlock: {
+    alignItems: 'center',
+    marginBottom: 4,
+  },
+  brandTitle: {
+    color: '#e85a3c',
+    fontSize: 26,
+    fontWeight: '800',
+  },
+  brandTagline: {
+    color: '#8a8a8a',
+    fontSize: 12,
+    marginTop: 2,
+  },
   headerRow: {
     flexDirection: 'row',
     alignItems: 'center',
@@ -314,7 +336,7 @@ const styles = StyleSheet.create({
     lineHeight: 22,
   },
   recordLine: {
-    color: '#7c6cff',
+    color: '#e85a3c',
     textAlign: 'center',
     fontWeight: '700',
     fontSize: 14,
@@ -327,6 +349,12 @@ const styles = StyleSheet.create({
     fontSize: 16,
     borderWidth: 1,
     borderColor: '#333',
+  },
+  playerRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 10,
   },
   playerLabel: {
     color: '#ccc',
@@ -343,7 +371,7 @@ const styles = StyleSheet.create({
     paddingVertical: 24,
   },
   matchedText: {
-    color: '#7c6cff',
+    color: '#e85a3c',
     fontSize: 18,
     fontWeight: '700',
     textAlign: 'center',
@@ -371,7 +399,7 @@ const styles = StyleSheet.create({
     fontSize: 15,
   },
   primaryBtn: {
-    backgroundColor: '#7c6cff',
+    backgroundColor: '#e85a3c',
     borderRadius: 12,
     paddingVertical: 16,
     alignItems: 'center',

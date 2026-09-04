@@ -30,8 +30,9 @@ def build_puzzle(
     difficulty: str,
     grid_size: Optional[int],
     word: Optional[str],
+    path_complexity: Optional[float] = None,
 ):
-    return puzzle_service.build_puzzle(difficulty, grid_size, word)
+    return puzzle_service.build_puzzle(difficulty, grid_size, word, path_complexity)
 
 
 def generate_puzzle(

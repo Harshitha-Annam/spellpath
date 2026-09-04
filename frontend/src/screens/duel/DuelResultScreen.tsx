@@ -8,6 +8,7 @@ import {
   View,
 } from 'react-native';
 import { buildLiveDuelShareMessage } from '../../api';
+import { PlayerAvatar } from '../../components/PlayerAvatar';
 import { loadLiveDuelStats, recordLiveDuelResult, LiveDuelStats } from '../../liveDuelStatsStorage';
 import { formatScore } from '../../scoring';
 import { LiveDuelPuzzleResult } from '../../types';
@@ -83,6 +84,9 @@ function endReasonLabel(
   reason: string | null | undefined,
   won: boolean | null,
 ): string | null {
+  if (reason === 'abort') {
+    return 'Match cancelled before it started';
+  }
   if (reason === 'forfeit') {
     return won === true ? 'Opponent forfeited' : won === false ? 'You forfeited' : 'Ended by forfeit';
   }
@@ -269,13 +273,19 @@ export const DuelResultScreen: React.FC<Props> = ({
 
       <View style={styles.scoreCard}>
         <View style={styles.scoreRow}>
-          <Text style={styles.scoreLabel}>You</Text>
+          <View style={styles.scoreIdentity}>
+            <PlayerAvatar name={result.player_names?.[userId] ?? 'You'} size={36} />
+            <Text style={styles.scoreLabel}>You</Text>
+          </View>
           <Text style={styles.scoreValue}>
             {formatScore(myScore)} · {mySolved} solved
           </Text>
         </View>
         <View style={styles.scoreRow}>
-          <Text style={styles.scoreLabel}>{opponentName}</Text>
+          <View style={styles.scoreIdentity}>
+            <PlayerAvatar name={opponentName} size={36} />
+            <Text style={styles.scoreLabel}>{opponentName}</Text>
+          </View>
           <Text style={styles.scoreValue}>
             {formatScore(opponentScore)} · {opponentSolved} solved
           </Text>
@@ -355,7 +365,7 @@ const styles = StyleSheet.create({
     fontSize: 14,
   },
   statsLine: {
-    color: '#7c6cff',
+    color: '#e85a3c',
     textAlign: 'center',
     fontWeight: '700',
     fontSize: 14,
@@ -376,6 +386,12 @@ const styles = StyleSheet.create({
     justifyContent: 'space-between',
     alignItems: 'center',
   },
+  scoreIdentity: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 10,
+    flexShrink: 1,
+  },
   scoreLabel: { color: '#aaa', fontSize: 16 },
   scoreValue: { color: '#f5f5ff', fontSize: 16, fontWeight: '700' },
   analysisSection: { gap: 10 },
@@ -387,7 +403,7 @@ const styles = StyleSheet.create({
     gap: 10,
   },
   analysisHeader: { flexDirection: 'row', alignItems: 'center', gap: 8 },
-  analysisIndex: { color: '#7c6cff', fontWeight: '800', fontSize: 14 },
+  analysisIndex: { color: '#e85a3c', fontWeight: '800', fontSize: 14 },
   analysisWord: { color: '#f5f5ff', fontWeight: '700', fontSize: 15, flex: 1 },
   analysisDiff: { color: '#888', fontSize: 11, fontWeight: '700' },
   analysisScores: { flexDirection: 'row', gap: 12 },
@@ -417,7 +433,7 @@ const styles = StyleSheet.create({
   },
   shareBtnText: { color: '#f5f5ff', fontSize: 16, fontWeight: '700' },
   primaryBtn: {
-    backgroundColor: '#7c6cff',
+    backgroundColor: '#e85a3c',
     borderRadius: 12,
     paddingVertical: 16,
     paddingHorizontal: 32,
@@ -432,7 +448,7 @@ const styles = StyleSheet.create({
     paddingHorizontal: 32,
     alignItems: 'center',
     borderWidth: 1,
-    borderColor: '#7c6cff',
+    borderColor: '#e85a3c',
     gap: 2,
   },
   newGameBtnText: { color: '#f5f5ff', fontSize: 17, fontWeight: '700' },

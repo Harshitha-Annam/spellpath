@@ -31,6 +31,8 @@ export interface PuzzleData {
   difficulty: Difficulty;
   gridSize: number;
   targetWord: string;
+  /** Riddle shown instead of the target word (live duels). */
+  clue?: string;
   startCell: GridPos;
   endCell: GridPos;
   cells: CellData[][];
@@ -168,6 +170,8 @@ export interface LiveDuelOpponentProgress {
   solved: number;
   score: number;
   displayName?: string;
+  connected?: boolean;
+  ready?: boolean;
 }
 
 export interface LiveDuelPuzzleResult {

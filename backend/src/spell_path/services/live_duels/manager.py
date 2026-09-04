@@ -203,11 +203,22 @@ async def forfeit_duel(duel_id: str, user_id: str, reason: str = "forfeit") -> O
     if not duel or duel.ended or user_id not in duel.players:
         return None
 
+    # Pre-start exits are aborts (no scoreboard); mid-match exits are forfeits.
+    if reason == "forfeit" and duel.status in (DuelStatus.WAITING, DuelStatus.COUNTDOWN):
+        reason = "abort"
+
+    if duel.countdown_task and not duel.countdown_task.done():
+        duel.countdown_task.cancel()
+        duel.countdown_task = None
+    if duel.finish_task and not duel.finish_task.done():
+        duel.finish_task.cancel()
+        duel.finish_task = None
+
     duel.players[user_id].forfeited = True
     duel.end_reason = reason
     duel.status = DuelStatus.FINISHED
     duel.ended = True
-    duel.winner_id = _resolve_winner(duel, forfeit_user_id=user_id)
+    duel.winner_id = None if reason == "abort" else _resolve_winner(duel, forfeit_user_id=user_id)
     await live_duel_repo.remove_user_mappings(list(duel.players.keys()))
     await live_duel_repo.save_duel(duel)
     logger.info(
@@ -218,6 +229,16 @@ async def forfeit_duel(duel_id: str, user_id: str, reason: str = "forfeit") -> O
         duel.winner_id,
     )
     return duel
+
+
+async def abort_duel(duel_id: str, user_id: str) -> Optional[Duel]:
+    """Cancel a duel before it becomes active (queue matched / countdown)."""
+    duel = await live_duel_repo.fetch_duel(duel_id)
+    if not duel or duel.ended or user_id not in duel.players:
+        return None
+    if duel.status == DuelStatus.ACTIVE:
+        return None
+    return await forfeit_duel(duel_id, user_id, reason="abort")
 
 
 async def opponent_display_name(duel_id: str, user_id: str) -> Optional[str]:

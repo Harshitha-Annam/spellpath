@@ -1,6 +1,7 @@
 import React, { useEffect, useState } from 'react';
 import {
   ActivityIndicator,
+  ScrollView,
   StyleSheet,
   Text,
   TextInput,
@@ -8,32 +9,54 @@ import {
   View,
 } from 'react-native';
 import { formatDuration } from '../api';
-import { DuelInfo, PlayerProfile } from '../types';
+import {
+  DuelInfo,
+  DuelLeaderboard,
+  LeaderboardEntry,
+  PlayerProfile,
+} from '../types';
 
 interface Props {
   player: PlayerProfile | null;
   suggestedName?: string;
   duel: DuelInfo | null;
+  leaderboard: DuelLeaderboard | null;
   isBusy: boolean;
   error: string | null;
   onRegister: (name: string) => void;
   onSwitchPlayer: () => void;
   onCreateDuel: () => void;
   onJoinDuel: (code: string) => void;
+  onRefreshLeaderboard: () => void;
   onStartRun: () => void;
   onBackToSolo: () => void;
+}
+
+function EntryRow({ entry }: { entry: LeaderboardEntry }) {
+  return (
+    <View style={styles.row}>
+      <Text style={styles.rank}>#{entry.rank}</Text>
+      <View style={styles.rowMid}>
+        <Text style={styles.rowName}>{entry.player_name}</Text>
+        <Text style={styles.rowMeta}>{formatDuration(entry.total_time_ms)}</Text>
+      </View>
+      <Text style={styles.rowScore}>{entry.total_score.toFixed(2)}</Text>
+    </View>
+  );
 }
 
 export const DuelLobby: React.FC<Props> = ({
   player,
   suggestedName = '',
   duel,
+  leaderboard,
   isBusy,
   error,
   onRegister,
   onSwitchPlayer,
   onCreateDuel,
   onJoinDuel,
+  onRefreshLeaderboard,
   onStartRun,
   onBackToSolo,
 }) => {
@@ -47,9 +70,16 @@ export const DuelLobby: React.FC<Props> = ({
   const champion = duel?.champion;
   const ready = duel?.status === 'ready';
   const preparing = duel?.status === 'preparing';
+  const standings = leaderboard?.entries ?? [];
+  const showStandings = !!duel && duel.status !== 'failed';
 
   return (
-    <View style={styles.container}>
+    <ScrollView
+      style={styles.scroll}
+      contentContainerStyle={styles.container}
+      showsVerticalScrollIndicator
+      keyboardShouldPersistTaps="handled"
+    >
       <View style={styles.topRow}>
         <TouchableOpacity onPress={onBackToSolo} style={styles.backBtn}>
           <Text style={styles.backText}>← Solo mode</Text>
@@ -202,16 +232,59 @@ export const DuelLobby: React.FC<Props> = ({
         </View>
       ) : null}
 
+      {showStandings ? (
+        <View style={styles.card}>
+          <View style={styles.standingsHeader}>
+            <Text style={styles.cardLabel}>LEADERBOARD</Text>
+            <TouchableOpacity
+              onPress={onRefreshLeaderboard}
+              disabled={isBusy}
+              hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
+            >
+              <Text style={styles.refreshText}>Refresh</Text>
+            </TouchableOpacity>
+          </View>
+          <Text style={styles.hint}>
+            Standings for this challenge — view before you play.
+          </Text>
+          {leaderboard == null && isBusy ? (
+            <View style={styles.prepBox}>
+              <ActivityIndicator color="#7c6cff" />
+              <Text style={styles.prepText}>Loading standings…</Text>
+            </View>
+          ) : standings.length === 0 ? (
+            <Text style={styles.emptyStandings}>
+              No completed runs yet. Be the first on the board.
+            </Text>
+          ) : (
+            <>
+              <Text style={styles.standingsMeta}>
+                {leaderboard?.total_attempts ?? standings.length}{' '}
+                {(leaderboard?.total_attempts ?? standings.length) === 1
+                  ? 'completed run'
+                  : 'completed runs'}
+              </Text>
+              {standings.map((entry) => (
+                <EntryRow key={entry.attempt_id} entry={entry} />
+              ))}
+            </>
+          )}
+        </View>
+      ) : null}
+
       {error ? <Text style={styles.errorText}>{error}</Text> : null}
-    </View>
+    </ScrollView>
   );
 };
 
 const styles = StyleSheet.create({
+  scroll: {
+    flex: 1,
+  },
   container: {
     paddingHorizontal: 16,
     paddingTop: 8,
-    paddingBottom: 24,
+    paddingBottom: 28,
     width: '100%',
   },
   topRow: {
@@ -257,6 +330,54 @@ const styles = StyleSheet.create({
     fontWeight: '800',
     color: '#7c6cff',
     letterSpacing: 1.1,
+  },
+  standingsHeader: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+  },
+  refreshText: {
+    color: '#7c6cff',
+    fontWeight: '800',
+    fontSize: 13,
+  },
+  standingsMeta: {
+    color: '#888',
+    fontWeight: '700',
+    fontSize: 12,
+  },
+  emptyStandings: {
+    color: '#aaa',
+    fontWeight: '600',
+    fontSize: 14,
+    lineHeight: 20,
+  },
+  row: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    paddingVertical: 8,
+    paddingHorizontal: 4,
+    borderRadius: 8,
+  },
+  rank: {
+    width: 36,
+    fontWeight: '800',
+    color: '#888',
+  },
+  rowMid: {
+    flex: 1,
+  },
+  rowName: {
+    fontWeight: '800',
+    color: '#f5f5ff',
+  },
+  rowMeta: {
+    color: '#666',
+    fontSize: 12,
+  },
+  rowScore: {
+    fontWeight: '900',
+    color: '#f5f5ff',
   },
   input: {
     borderWidth: 1,

@@ -25,6 +25,7 @@ const LiveDuelFlow: React.FC<InnerProps> = ({ onBackToSolo, onBoardDragChange })
     opponentName,
     rematchStatus,
     rematchDuelId,
+    matchCancelled,
   } = useDuelSocket();
   const [player, setPlayer] = useState<PlayerProfile | null>(null);
   const [autoStartQueue, setAutoStartQueue] = useState(false);
@@ -34,6 +35,20 @@ const LiveDuelFlow: React.FC<InnerProps> = ({ onBackToSolo, onBoardDragChange })
     void loadPlayerProfile().then(setPlayer);
     return () => disconnect();
   }, [disconnect]);
+
+  const goHome = useCallback(() => {
+    rematchHandledRef.current = false;
+    resetSession();
+    disconnect();
+    onBackToSolo();
+  }, [disconnect, onBackToSolo, resetSession]);
+
+  // Opponent (or local) aborted before the duel started — return home, no scoreboard.
+  useEffect(() => {
+    if (matchCancelled) {
+      goHome();
+    }
+  }, [goHome, matchCancelled]);
 
   const handleMatched = useCallback(
     async (matchedDuelId: string, matchedOpponentName?: string) => {
@@ -113,11 +128,11 @@ const LiveDuelFlow: React.FC<InnerProps> = ({ onBackToSolo, onBoardDragChange })
     return (
       <DuelQueueScreen
         autoStart={autoStartQueue}
-        onMatched={(id, opponentName) => {
+        onMatched={(id, matchedName) => {
           setAutoStartQueue(false);
-          void handleMatched(id, opponentName);
+          void handleMatched(id, matchedName);
         }}
-        onBack={onBackToSolo}
+        onBack={goHome}
       />
     );
   }
@@ -126,6 +141,7 @@ const LiveDuelFlow: React.FC<InnerProps> = ({ onBackToSolo, onBoardDragChange })
     return (
       <DuelCountdownScreen
         onDuelStart={() => setPhase('playing')}
+        onAbort={goHome}
       />
     );
   }
@@ -134,6 +150,7 @@ const LiveDuelFlow: React.FC<InnerProps> = ({ onBackToSolo, onBoardDragChange })
     return (
       <View style={styles.gamePhase}>
         <DuelGameScreen
+          playerName={player?.name ?? 'You'}
           onDuelEnd={() => setPhase('result')}
           onBoardDragChange={onBoardDragChange}
         />
@@ -148,7 +165,7 @@ const LiveDuelFlow: React.FC<InnerProps> = ({ onBackToSolo, onBoardDragChange })
           userId={player.id}
           onNewGame={handleNewGame}
           onRematchBot={() => void handleRematchBot()}
-          onHome={onBackToSolo}
+          onHome={goHome}
         />
       </View>
     );
@@ -179,7 +196,7 @@ export const LiveDuelScreen: React.FC<Props> = (props) => {
 const styles = StyleSheet.create({
   screen: {
     flex: 1,
-    backgroundColor: '#0f0f18',
+    backgroundColor: '#0a0a0a',
   },
   flow: {
     flex: 1,

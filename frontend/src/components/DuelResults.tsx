@@ -1,5 +1,6 @@
 import React, { useState } from 'react';
 import {
+  ScrollView,
   Share,
   StyleSheet,
   Text,
@@ -92,7 +93,12 @@ export const DuelResults: React.FC<Props> = ({
   };
 
   return (
-    <View style={styles.container}>
+    <ScrollView
+      style={styles.scroll}
+      contentContainerStyle={styles.container}
+      showsVerticalScrollIndicator
+      keyboardShouldPersistTaps="handled"
+    >
       <Text style={styles.eyebrow}>SPELLPATH COMBAT COMPLETE</Text>
       {attempt.became_champion ? (
         <Text style={styles.hero}>You took the crown!</Text>
@@ -214,11 +220,14 @@ export const DuelResults: React.FC<Props> = ({
       <TouchableOpacity onPress={onBackToSolo}>
         <Text style={styles.link}>Return to solo mode</Text>
       </TouchableOpacity>
-    </View>
+    </ScrollView>
   );
 };
 
 const styles = StyleSheet.create({
+  scroll: {
+    flex: 1,
+  },
   container: {
     width: '100%',
     paddingHorizontal: 16,

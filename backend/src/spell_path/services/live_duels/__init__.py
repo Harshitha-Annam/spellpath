@@ -8,10 +8,18 @@ from .puzzles import (
     build_live_duel_puzzle,
     difficulty_for_index,
     ensure_puzzle_at_index,
+    path_complexity_for_index,
     public_puzzle,
     schedule_prefetch,
 )
-from .service import forfeit_live_duel, join_bot_duel, join_queue, leave_queue, queue_status
+from .service import (
+    abort_live_duel,
+    forfeit_live_duel,
+    join_bot_duel,
+    join_queue,
+    leave_queue,
+    queue_status,
+)
 
 __all__ = [
     "BOT_DISPLAY_NAME",
@@ -21,6 +29,7 @@ __all__ = [
     "DuelStatus",
     "PlayerState",
     "QueueEntry",
+    "abort_live_duel",
     "build_live_duel_puzzle",
     "difficulty_for_index",
     "ensure_puzzle_at_index",
@@ -29,6 +38,7 @@ __all__ = [
     "join_queue",
     "leave_queue",
     "manager",
+    "path_complexity_for_index",
     "public_puzzle",
     "queue_status",
     "schedule_prefetch",

@@ -13,6 +13,13 @@ DIFFICULTY_TO_SIZE: Dict[str, int] = {
     "hard": 9,
 }
 
+# Default path_complexity (0–100) when the caller omits it.
+DEFAULT_PATH_COMPLEXITY: Dict[str, float] = {
+    "easy": 30.0,
+    "medium": 50.0,
+    "hard": 70.0,
+}
+
 SIZE_PRESETS: Dict[int, Dict] = {
     5: {
         "difficulty": "easy",
@@ -27,6 +34,7 @@ SIZE_PRESETS: Dict[int, Dict] = {
         "wall_count_max": 0,
         "trust_forced_during_refine": False,
         "skip_validate_if_forced": True,
+        "path_complexity_attempts": 24,
     },
     7: {
         "difficulty": "medium",
@@ -41,6 +49,7 @@ SIZE_PRESETS: Dict[int, Dict] = {
         "wall_count_max": 5,
         "trust_forced_during_refine": True,
         "skip_validate_if_forced": True,
+        "path_complexity_attempts": 28,
     },
     9: {
         "difficulty": "hard",
@@ -55,6 +64,7 @@ SIZE_PRESETS: Dict[int, Dict] = {
         "wall_count_max": 8,
         "trust_forced_during_refine": True,
         "skip_validate_if_forced": True,
+        "path_complexity_attempts": 32,
     },
 }
 
@@ -98,3 +108,55 @@ def resolve_grid_size(
         size = DIFFICULTY_TO_SIZE[difficulty]
 
     return size, difficulty, SIZE_PRESETS[size]
+
+
+def clamp_path_complexity(value: float) -> float:
+    """Clamp path complexity to the inclusive [0, 100] range."""
+    return max(0.0, min(100.0, float(value)))
+
+
+def resolve_path_complexity(
+    difficulty: str,
+    path_complexity: Optional[float],
+) -> float:
+    """
+    Resolve the caller's path_complexity, or fall back to the difficulty default.
+    """
+    if path_complexity is None:
+        return DEFAULT_PATH_COMPLEXITY.get(difficulty, 50.0)
+    return clamp_path_complexity(path_complexity)
+
+
+def path_complexity_targets(grid_size: int, path_complexity: float) -> Dict:
+    """
+    Map path_complexity (0–100) to Hamiltonian path shape targets.
+
+    Low complexity → snake-like (few turns, long straights).
+    High complexity → woven (many turns, short max straight).
+
+    Note: a column boustrophedon has ~2*(n-1) turns (two corners per
+    column switch) and max straight of n-1 steps.
+    """
+    t = clamp_path_complexity(path_complexity) / 100.0
+    n = max(2, int(grid_size))
+
+    turns_low = 2 * (n - 1)
+    turns_high = max(turns_low + 1, int(round(n * 4.0)))
+    straight_low = n - 1
+    straight_high = 3
+
+    target_turns = int(round(turns_low + t * (turns_high - turns_low)))
+    max_straight = int(round(straight_low + t * (straight_high - straight_low)))
+    max_straight = max(2, max_straight)
+    min_turns = max(1, int(round(target_turns * 0.85)))
+
+    # Near-zero keeps the snake almost intact; high values fully mix.
+    qf_scale = 0.005 + (t ** 1.4) * 1.8
+
+    return {
+        "path_complexity": clamp_path_complexity(path_complexity),
+        "target_turns": target_turns,
+        "min_turns": min_turns,
+        "max_straight": max_straight,
+        "qf_scale": qf_scale,
+    }

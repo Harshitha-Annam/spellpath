@@ -6,7 +6,12 @@ import random
 import uuid
 from typing import Dict, List, Optional, Set, Tuple
 
-from .config import get_random_word, resolve_grid_size
+from .config import (
+    get_random_word,
+    path_complexity_targets,
+    resolve_grid_size,
+    resolve_path_complexity,
+)
 from .difficulty import DifficultyEvaluator
 from .grid import Cell, EdgeKey, sanitize_word, walls_set_to_list
 from .milestones import MilestonePlacer
@@ -20,7 +25,7 @@ Milestone = Dict
 class PuzzleEngine:
     """
     Path-first puzzle builder:
-      1. Generate Hamiltonian path (backbite)
+      1. Generate Hamiltonian path (backbite + path-complexity selection)
       2. Place word milestones along the path
       3. Add walls iteratively with uniqueness validation
     """
@@ -31,21 +36,26 @@ class PuzzleEngine:
         cols: int,
         preset: Dict,
         difficulty: str,
+        path_complexity: float = 50.0,
     ):
         self.rows = rows
         self.cols = cols
         self.preset = preset
         self.difficulty = difficulty
         self.size = rows
+        self.path_complexity = path_complexity
+        self.path_targets = path_complexity_targets(rows, path_complexity)
 
     @classmethod
     def from_params(
         cls,
         difficulty: str = "medium",
         grid_size: Optional[int] = None,
+        path_complexity: Optional[float] = None,
     ) -> "PuzzleEngine":
         size, difficulty, preset = resolve_grid_size(difficulty, grid_size)
-        return cls(size, size, preset, difficulty)
+        resolved_complexity = resolve_path_complexity(difficulty, path_complexity)
+        return cls(size, size, preset, difficulty, path_complexity=resolved_complexity)
 
     def build(
         self,
@@ -65,6 +75,7 @@ class PuzzleEngine:
         skip_validate_if_forced = bool(preset["skip_validate_if_forced"])
         wall_count_min = int(preset.get("wall_count_min", 0))
         wall_count_max = int(preset.get("wall_count_max", 0))
+        path_attempts = int(preset.get("path_complexity_attempts", 24))
         no_walls_max_attempts = max(1, int(no_walls_max_attempts))
 
         word = self._resolve_word(word, no_walls)
@@ -77,6 +88,7 @@ class PuzzleEngine:
                 vbudget,
                 no_walls_max_attempts,
                 circuits_only,
+                path_attempts,
             )
             walls: Set[EdgeKey] = set()
             evaluator = DifficultyEvaluator(self.rows, self.cols, nbudget)
@@ -96,10 +108,15 @@ class PuzzleEngine:
                     "growth_forced": False,
                     "refine_accepted": 0,
                     "no_wall_attempts": nowall_meta["attempts"],
+                    **self._path_complexity_stats(nowall_meta.get("path_meta") or {}),
                 },
             )
 
-        path = path_generator.generate(circuits_only=circuits_only)
+        path, path_meta = path_generator.generate_for_complexity(
+            self.path_targets,
+            attempts=path_attempts,
+            circuits_only=circuits_only,
+        )
         milestones = MilestonePlacer.place(path, word)
 
         wall_placer = WallPlacer(
@@ -175,8 +192,22 @@ class PuzzleEngine:
                 "growth_forced": wall_meta.get("growth_forced"),
                 "refine_accepted": wall_meta.get("refine_accepted"),
                 "no_wall_attempts": 0,
+                **self._path_complexity_stats(path_meta),
             },
         )
+
+    def _path_complexity_stats(self, path_meta: Dict) -> Dict:
+        return {
+            "path_complexity": self.path_complexity,
+            "path_turns": path_meta.get("turns"),
+            "path_max_straight": path_meta.get("max_straight"),
+            "path_target_turns": path_meta.get("target_turns", self.path_targets["target_turns"]),
+            "path_target_max_straight": path_meta.get(
+                "target_max_straight", self.path_targets["max_straight"]
+            ),
+            "path_complexity_matched": path_meta.get("matched_band"),
+            "path_complexity_attempts": path_meta.get("attempts"),
+        }
 
     def _resolve_word(self, word: Optional[str], no_walls: bool) -> str:
         from .config import WORD_BANK
@@ -212,12 +243,18 @@ class PuzzleEngine:
         node_budget: int,
         max_attempts: int,
         circuits_only: bool,
+        path_attempts: int,
     ) -> Tuple[List[Cell], List[Milestone], Dict]:
         solver = UniquenessSolver(self.rows, self.cols, node_budget)
         last_reason = "no attempts made"
+        best_unique: Optional[Tuple[List[Cell], List[Milestone], Dict, float]] = None
 
         for attempt in range(1, max_attempts + 1):
-            path = path_generator.generate(circuits_only=circuits_only)
+            path, path_meta = path_generator.generate_for_complexity(
+                self.path_targets,
+                attempts=max(1, path_attempts // 2),
+                circuits_only=circuits_only,
+            )
             milestones = MilestonePlacer.place(path, word)
             result = solver.solve_with_milestones(path, set(), milestones)
 
@@ -228,11 +265,20 @@ class PuzzleEngine:
                 last_reason = "ambiguous — a second milestone-respecting solution exists with no walls"
                 continue
 
-            return path, milestones, {
+            score = float(path_meta.get("score", 0.0))
+            meta = {
                 "status": "unique",
                 "attempts": attempt,
                 "nodes": result["nodes"],
+                "path_meta": path_meta,
             }
+            if path_meta.get("matched_band"):
+                return path, milestones, meta
+            if best_unique is None or score > best_unique[3]:
+                best_unique = (path, milestones, meta, score)
+
+        if best_unique is not None:
+            return best_unique[0], best_unique[1], best_unique[2]
 
         raise RuntimeError(
             f"Could not find a uniquely solvable no-wall path after {max_attempts} "
@@ -264,6 +310,7 @@ class PuzzleEngine:
         return {
             "id": f"puzzle_{self.difficulty}_{uuid.uuid4().hex[:10]}",
             "difficulty": self.difficulty,
+            "path_complexity": self.path_complexity,
             "grid_size": self.size,
             "rows": self.rows,
             "cols": self.cols,
@@ -289,7 +336,12 @@ def build_puzzle(
     grid_size: Optional[int] = None,
     word: Optional[str] = None,
     no_walls: bool = False,
+    path_complexity: Optional[float] = None,
 ) -> Dict:
     """Convenience entry point for the puzzle-building engine."""
-    engine = PuzzleEngine.from_params(difficulty=difficulty, grid_size=grid_size)
+    engine = PuzzleEngine.from_params(
+        difficulty=difficulty,
+        grid_size=grid_size,
+        path_complexity=path_complexity,
+    )
     return engine.build(word=word, no_walls=no_walls)

@@ -40,7 +40,7 @@ class Duel:
     created_at: float = 0.0
     countdown_start_at: Optional[float] = None
     duel_start_at: Optional[float] = None
-    duration_sec: int = 120
+    duration_sec: int = 60
     winner_id: Optional[str] = None
     ended: bool = False
     end_reason: Optional[str] = None

@@ -85,6 +85,7 @@ def build_puzzle(
     difficulty: str,
     grid_size: Optional[int],
     word: Optional[str],
+    path_complexity: Optional[float] = None,
 ):
     with timed_operation(
         logger,
@@ -92,12 +93,14 @@ def build_puzzle(
         difficulty=difficulty,
         grid_size=grid_size,
         word=word,
+        path_complexity=path_complexity,
     ) as log_ok:
         try:
             puzzle = build_engine_puzzle(
                 difficulty=difficulty,
                 grid_size=grid_size,
                 word=word,
+                path_complexity=path_complexity,
             )
         except ValueError as exc:
             raise BadRequestError(str(exc)) from exc
@@ -106,9 +109,12 @@ def build_puzzle(
         except Exception as exc:
             raise InternalServerError(str(exc)) from exc
 
+        stats = puzzle.get("stats") or {}
         log_ok(
             f"id={puzzle.get('id')} word={puzzle.get('word')} "
-            f"grid={puzzle.get('grid_size')} walls={len(puzzle.get('walls') or [])}"
+            f"grid={puzzle.get('grid_size')} walls={len(puzzle.get('walls') or [])} "
+            f"path_complexity={puzzle.get('path_complexity')} "
+            f"turns={stats.get('path_turns')} max_straight={stats.get('path_max_straight')}"
         )
         return puzzle
 

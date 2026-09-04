@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import math
 import random
-from typing import List, Optional, Tuple
+from typing import Dict, List, Optional, Tuple
 
 from .grid import DIR_LIST, build_index_grid, in_bounds
 
@@ -55,6 +55,65 @@ def attempt_move(
     return list(reversed(path[:k])) + path[k:]
 
 
+def count_turns(path: List[Cell]) -> int:
+    """Count direction changes along the path."""
+    if len(path) < 3:
+        return 0
+    turns = 0
+    for index in range(1, len(path) - 1):
+        d1 = (path[index][0] - path[index - 1][0], path[index][1] - path[index - 1][1])
+        d2 = (path[index + 1][0] - path[index][0], path[index + 1][1] - path[index][1])
+        if d1 != d2:
+            turns += 1
+    return turns
+
+
+def max_straight_run(path: List[Cell]) -> int:
+    """Longest run of consecutive steps in the same direction."""
+    if len(path) < 2:
+        return len(path)
+    best = 1
+    run = 1
+    prev = (path[1][0] - path[0][0], path[1][1] - path[0][1])
+    for index in range(2, len(path)):
+        direction = (
+            path[index][0] - path[index - 1][0],
+            path[index][1] - path[index - 1][1],
+        )
+        if direction == prev:
+            run += 1
+        else:
+            best = max(best, run)
+            run = 1
+            prev = direction
+    return max(best, run)
+
+
+def score_path_against_targets(path: List[Cell], targets: Dict) -> Tuple[float, int, int]:
+    """
+    Higher is better. Rewards turn count near target_turns and respects
+    the max_straight cap from path_complexity.
+    """
+    turns = count_turns(path)
+    straight = max_straight_run(path)
+    target_turns = int(targets["target_turns"])
+    max_straight = int(targets["max_straight"])
+    turn_tol = max(2, int(round(target_turns * 0.2)))
+
+    turn_error = abs(turns - target_turns)
+    straight_over = max(0, straight - max_straight)
+    # Prefer using the allowed straight budget at low complexity (avoid tiny runs).
+    straight_under = max(0, max_straight - straight) if targets["path_complexity"] < 40 else 0
+
+    score = -turn_error * 4 - straight_over * 10 - straight_under * 0.5
+    matched = turn_error <= turn_tol and straight_over == 0
+    if matched:
+        score += 1000
+    if turn_error == 0 and straight_over == 0:
+        score += 200
+    return score, turns, straight
+
+
 class HamiltonianPathGenerator:
     """Generates random Hamiltonian paths using the backbite algorithm."""
 
@@ -92,3 +151,76 @@ class HamiltonianPathGenerator:
                     index_grid = build_index_grid(path, self.rows, self.cols)
 
         return path
+
+    def generate_for_complexity(
+        self,
+        targets: Dict,
+        attempts: int = 24,
+        circuits_only: bool = False,
+    ) -> Tuple[List[Cell], Dict]:
+        """
+        Generate several candidate paths and keep the one closest to the
+        path-complexity targets (turns / max straight).
+        """
+        attempts = max(1, int(attempts))
+        best_path: Optional[List[Cell]] = None
+        best_score = float("-inf")
+        best_meta: Dict = {}
+
+        base_qf = self.quality_factor
+        scaled_qf = max(0.0, base_qf * float(targets.get("qf_scale", 1.0)))
+        complexity = float(targets["path_complexity"])
+        turn_tol = max(2, int(round(int(targets["target_turns"]) * 0.2)))
+
+        def consider(path: List[Cell], attempt: int) -> bool:
+            nonlocal best_path, best_score, best_meta
+            score, turns, straight = score_path_against_targets(path, targets)
+            matched = (
+                abs(turns - int(targets["target_turns"])) <= turn_tol
+                and straight <= int(targets["max_straight"])
+            )
+            if score > best_score:
+                best_score = score
+                best_path = path
+                best_meta = {
+                    "turns": turns,
+                    "max_straight": straight,
+                    "score": score,
+                    "attempts": attempt,
+                    "matched_band": matched,
+                }
+            return (
+                matched
+                and abs(turns - int(targets["target_turns"])) <= max(1, turn_tol // 2)
+            )
+
+        try:
+            # Always score the pure snake — ideal low-complexity baseline.
+            if consider(make_snake_path(self.rows, self.cols), 0):
+                best_meta["target_turns"] = int(targets["target_turns"])
+                best_meta["min_turns"] = int(targets["min_turns"])
+                best_meta["target_max_straight"] = int(targets["max_straight"])
+                best_meta["path_complexity"] = complexity
+                return best_path, best_meta
+
+            # Blend quality_factor across attempts so mid/high complexity explores
+            # both lightly and heavily mixed paths.
+            for attempt in range(1, attempts + 1):
+                frac = attempt / attempts
+                # Low complexity: stay near scaled_qf (tiny). High: ramp up mixing.
+                if complexity <= 35:
+                    self.quality_factor = max(0.0, scaled_qf * (0.5 + frac))
+                else:
+                    self.quality_factor = max(0.05, scaled_qf * (0.35 + 1.1 * frac))
+                path = self.generate(circuits_only=circuits_only)
+                if consider(path, attempt):
+                    break
+        finally:
+            self.quality_factor = base_qf
+
+        assert best_path is not None
+        best_meta["target_turns"] = int(targets["target_turns"])
+        best_meta["min_turns"] = int(targets["min_turns"])
+        best_meta["target_max_straight"] = int(targets["max_straight"])
+        best_meta["path_complexity"] = complexity
+        return best_path, best_meta

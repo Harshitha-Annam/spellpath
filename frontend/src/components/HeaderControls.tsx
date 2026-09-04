@@ -244,7 +244,7 @@ const styles = StyleSheet.create({
     fontSize: 16,
   },
   liveDuelBtn: {
-    backgroundColor: '#7c6cff',
+    backgroundColor: '#e85a3c',
     borderRadius: 12,
     paddingVertical: 12,
     paddingHorizontal: 20,

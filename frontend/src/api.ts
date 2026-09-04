@@ -39,6 +39,7 @@ interface ApiPuzzleResponse {
   difficulty?: Difficulty | string;
   grid_size: number;
   word?: string;
+  clue?: string;
   start_cell?: [number, number];
   end_cell?: [number, number];
   milestones: ApiMilestone[];
@@ -208,6 +209,7 @@ export function mapApiPuzzle(
     difficulty,
     gridSize,
     targetWord: (data.word ?? '').toUpperCase(),
+    clue: data.clue?.trim() || undefined,
     startCell,
     endCell,
     cells,
@@ -815,6 +817,21 @@ export async function forfeitLiveDuel(
 ): Promise<LiveDuelEndPayload> {
   return apiJsonWithRetry<LiveDuelEndPayload>(
     spellpathPath(`/duels/${encodeURIComponent(duelId)}/forfeit`),
+    {
+      method: 'POST',
+      body: JSON.stringify({ user_id: userId }),
+    },
+    signal,
+  );
+}
+
+export async function abortLiveDuel(
+  duelId: string,
+  userId: string,
+  signal?: AbortSignal,
+): Promise<LiveDuelEndPayload> {
+  return apiJsonWithRetry<LiveDuelEndPayload>(
+    spellpathPath(`/duels/${encodeURIComponent(duelId)}/abort`),
     {
       method: 'POST',
       body: JSON.stringify({ user_id: userId }),

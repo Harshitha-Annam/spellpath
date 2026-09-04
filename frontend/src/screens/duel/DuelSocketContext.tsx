@@ -8,7 +8,7 @@ import React, {
   useState,
 } from 'react';
 import { AppState, AppStateStatus } from 'react-native';
-import { mapApiPuzzle, resolveLiveDuelWsUrl, forfeitLiveDuel } from '../../api';
+import { mapApiPuzzle, resolveLiveDuelWsUrl, forfeitLiveDuel, abortLiveDuel } from '../../api';
 import {
   LiveDuelEndPayload,
   LiveDuelOpponentProgress,
@@ -52,10 +52,14 @@ interface DuelSocketContextValue {
   rematchStatus: LiveDuelRematchStatus;
   rematchOfferFrom: string | null;
   rematchDuelId: string | null;
+  /** True when match was cancelled before play started (local or opponent abort). */
+  matchCancelled: boolean;
   connect: (duelId: string, userId: string) => Promise<void>;
   disconnect: () => void;
   resetSession: () => void;
   forfeit: () => Promise<void>;
+  /** Leave before the duel becomes active — goes home, no scoreboard. */
+  abortMatch: () => Promise<void>;
   requestRematch: () => void;
   acceptRematch: () => void;
   submitAnswer: (
@@ -74,13 +78,14 @@ function mapWsPuzzle(raw: unknown): PuzzleData {
     difficulty?: string;
     grid_size: number;
     word?: string;
+    clue?: string;
     milestones: { index: number; character: string; cell: [number, number] }[];
     walls?: { cell_a: [number, number]; cell_b: [number, number] }[];
     start_cell?: [number, number];
     end_cell?: [number, number];
   };
   const difficulty = (p.difficulty ?? 'easy') as 'easy' | 'medium' | 'hard';
-  return mapApiPuzzle({ ...p, word: p.word ?? '' }, difficulty);
+  return mapApiPuzzle({ ...p, word: p.word ?? '', clue: p.clue }, difficulty);
 }
 
 function parseOpponentProgress(raw: unknown): LiveDuelOpponentProgress {
@@ -88,11 +93,15 @@ function parseOpponentProgress(raw: unknown): LiveDuelOpponentProgress {
     solved?: number;
     score?: number;
     display_name?: string;
+    connected?: boolean;
+    ready?: boolean;
   };
   return {
     solved: Number(o.solved) || 0,
     score: Number(o.score) || 0,
     displayName: o.display_name ?? undefined,
+    connected: o.connected,
+    ready: o.ready,
   };
 }
 
@@ -110,7 +119,7 @@ export const DuelSocketProvider: React.FC<{ children: React.ReactNode }> = ({ ch
   const [phase, setPhaseState] = useState<LiveDuelPhase>('queue');
   const [countdownStartAt, setCountdownStartAt] = useState<number | null>(null);
   const [duelStartAt, setDuelStartAt] = useState<number | null>(null);
-  const [durationSec, setDurationSec] = useState(120);
+  const [durationSec, setDurationSec] = useState(60);
   const [currentPuzzle, setCurrentPuzzle] = useState<PuzzleData | null>(null);
   const [puzzleIndex, setPuzzleIndex] = useState(0);
   const [myScore, setMyScore] = useState(0);
@@ -119,7 +128,7 @@ export const DuelSocketProvider: React.FC<{ children: React.ReactNode }> = ({ ch
     score: 0,
   });
   const [opponentName, setOpponentName] = useState('');
-  const [timeRemaining, setTimeRemaining] = useState(120);
+  const [timeRemaining, setTimeRemaining] = useState(60);
   const [result, setResult] = useState<LiveDuelEndPayload | null>(null);
   const [lastAnswerCorrect, setLastAnswerCorrect] = useState<boolean | null>(null);
   const [lastPointsAwarded, setLastPointsAwarded] = useState<number | null>(null);
@@ -131,11 +140,13 @@ export const DuelSocketProvider: React.FC<{ children: React.ReactNode }> = ({ ch
   const [rematchStatus, setRematchStatus] = useState<LiveDuelRematchStatus>('idle');
   const [rematchOfferFrom, setRematchOfferFrom] = useState<string | null>(null);
   const [rematchDuelId, setRematchDuelId] = useState<string | null>(null);
+  const [matchCancelled, setMatchCancelled] = useState(false);
   const statusRef = useRef(status);
   statusRef.current = status;
   phaseRef.current = phase;
   const resultRef = useRef(result);
   resultRef.current = result;
+  const duelStartAtRef = useRef<number | null>(null);
   const timerExpiredHandledRef = useRef(false);
   const opponentSolvedRef = useRef(0);
   const [tick, setTick] = useState(0);
@@ -164,14 +175,15 @@ export const DuelSocketProvider: React.FC<{ children: React.ReactNode }> = ({ ch
   const resetSession = useCallback(() => {
     setCountdownStartAt(null);
     setDuelStartAt(null);
-    setDurationSec(120);
+    duelStartAtRef.current = null;
+    setDurationSec(60);
     setCurrentPuzzle(null);
     setPuzzleIndex(0);
     setMyScore(0);
     setOpponentProgress({ solved: 0, score: 0 });
     opponentSolvedRef.current = 0;
     setOpponentName('');
-    setTimeRemaining(120);
+    setTimeRemaining(60);
     setResult(null);
     setLastAnswerCorrect(null);
     setLastPointsAwarded(null);
@@ -183,11 +195,27 @@ export const DuelSocketProvider: React.FC<{ children: React.ReactNode }> = ({ ch
     setRematchStatus('idle');
     setRematchOfferFrom(null);
     setRematchDuelId(null);
+    setMatchCancelled(false);
     reconnectAttemptRef.current = 0;
   }, []);
 
   const applyDuelEnd = useCallback(
     (payload: LiveDuelEndPayload) => {
+      const cancelledBeforeStart =
+        payload.end_reason === 'abort' ||
+        (payload.end_reason === 'forfeit' &&
+          duelStartAtRef.current == null &&
+          phaseRef.current !== 'playing');
+
+      if (cancelledBeforeStart) {
+        setMatchCancelled(true);
+        setStatus('finished');
+        setIsReconnecting(false);
+        setConnectionError(null);
+        setResult(null);
+        return;
+      }
+
       setResult(payload);
       setStatus('finished');
       setPhase('result');
@@ -208,9 +236,19 @@ export const DuelSocketProvider: React.FC<{ children: React.ReactNode }> = ({ ch
     const type = payload.type as string;
     switch (type) {
       case 'duel_info': {
-        const opponent = payload.opponent as { display_name?: string } | undefined;
+        const opponent = payload.opponent as
+          | { display_name?: string; connected?: boolean; ready?: boolean }
+          | undefined;
         if (opponent?.display_name) {
           setOpponentName(opponent.display_name);
+        }
+        if (opponent) {
+          setOpponentProgress((prev) => ({
+            ...prev,
+            displayName: opponent.display_name ?? prev.displayName,
+            connected: opponent.connected ?? prev.connected,
+            ready: opponent.ready ?? prev.ready,
+          }));
         }
         break;
       }
@@ -226,7 +264,8 @@ export const DuelSocketProvider: React.FC<{ children: React.ReactNode }> = ({ ch
         setIsReconnecting(false);
         setStatus('active');
         setDuelStartAt(Number(payload.start_at));
-        setDurationSec(Number(payload.duration_sec) || 120);
+        duelStartAtRef.current = Number(payload.start_at);
+        setDurationSec(Number(payload.duration_sec) || 60);
         setPhase('playing');
         break;
       case 'puzzle':
@@ -268,6 +307,7 @@ export const DuelSocketProvider: React.FC<{ children: React.ReactNode }> = ({ ch
         }
         if (payload.duel_start_at != null) {
           setDuelStartAt(Number(payload.duel_start_at));
+          duelStartAtRef.current = Number(payload.duel_start_at);
         }
         if (payload.duration_sec != null) {
           setDurationSec(Number(payload.duration_sec));
@@ -440,18 +480,64 @@ export const DuelSocketProvider: React.FC<{ children: React.ReactNode }> = ({ ch
       applyDuelEnd(payload);
     } catch {
       if (!resultRef.current) {
-        intentionalCloseRef.current = false;
-        void openSocket(true);
+        if (duelStartAtRef.current != null || phaseRef.current === 'playing') {
+          applyDuelEnd({
+            scores: {},
+            winner_id: null,
+            puzzles_solved: {},
+            end_reason: 'forfeit',
+          });
+        } else {
+          setMatchCancelled(true);
+          setStatus('finished');
+        }
       }
     } finally {
       clearReconnectTimer();
-      if (resultRef.current && wsRef.current) {
+      if (wsRef.current) {
         wsRef.current.close();
         wsRef.current = null;
       }
       forfeitingRef.current = false;
     }
-  }, [applyDuelEnd, clearReconnectTimer, openSocket, sendMessage]);
+  }, [applyDuelEnd, clearReconnectTimer, sendMessage]);
+
+  const abortMatch = useCallback(async () => {
+    const duelId = duelIdRef.current;
+    const userId = userIdRef.current;
+    if (forfeitingRef.current) {
+      return;
+    }
+
+    if (duelStartAtRef.current != null || phaseRef.current === 'playing') {
+      await forfeit();
+      return;
+    }
+
+    forfeitingRef.current = true;
+    intentionalCloseRef.current = true;
+    sendMessage({ type: 'abort' });
+
+    try {
+      if (duelId && userId) {
+        await abortLiveDuel(duelId, userId);
+      }
+    } catch {
+      // Local leave still proceeds.
+    } finally {
+      clearReconnectTimer();
+      if (wsRef.current) {
+        wsRef.current.close();
+        wsRef.current = null;
+      }
+      setMatchCancelled(true);
+      setStatus('finished');
+      setIsReconnecting(false);
+      setConnectionError(null);
+      setResult(null);
+      forfeitingRef.current = false;
+    }
+  }, [clearReconnectTimer, forfeit, sendMessage]);
 
   const requestRematch = useCallback(() => {
     setRematchStatus('waiting');
@@ -572,10 +658,12 @@ export const DuelSocketProvider: React.FC<{ children: React.ReactNode }> = ({ ch
       rematchStatus,
       rematchOfferFrom,
       rematchDuelId,
+      matchCancelled,
       connect,
       disconnect,
       resetSession,
       forfeit,
+      abortMatch,
       requestRematch,
       acceptRematch,
       submitAnswer,
@@ -604,10 +692,12 @@ export const DuelSocketProvider: React.FC<{ children: React.ReactNode }> = ({ ch
       rematchStatus,
       rematchOfferFrom,
       rematchDuelId,
+      matchCancelled,
       connect,
       disconnect,
       resetSession,
       forfeit,
+      abortMatch,
       requestRematch,
       acceptRematch,
       submitAnswer,

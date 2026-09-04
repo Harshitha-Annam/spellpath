@@ -10,6 +10,10 @@ async def forfeit_live_duel(duel_id: str, body: ForfeitBody):
     return await live_duels_service.forfeit_live_duel(duel_id, body)
 
 
+async def abort_live_duel(duel_id: str, body: ForfeitBody):
+    return await live_duels_service.abort_live_duel(duel_id, body)
+
+
 async def join_bot_duel(body: BotDuelBody):
     return await live_duels_service.join_bot_duel(body)
 

@@ -1,27 +1,34 @@
-import React, { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
+import React, { useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react';
 import { Alert, StyleSheet, Text, TouchableOpacity, View } from 'react-native';
 import { GameBoard } from '../../components/GameBoard';
-import { WordDisplay } from '../../components/WordDisplay';
+import { PlayerAvatar } from '../../components/PlayerAvatar';
 import { formatScore, isSuccessfulSolve } from '../../scoring';
 import { GridPos, PuzzleData } from '../../types';
 import { useDuelSocket } from './DuelSocketContext';
 
+const ACCENT = '#e85a3c';
+const ACCENT_SOFT = '#c94a32';
+
 interface Props {
+  playerName: string;
   onDuelEnd: () => void;
   onBoardDragChange?: (dragging: boolean) => void;
 }
 
-function difficultyLabel(difficulty: string | undefined): string {
-  return (difficulty ?? 'easy').toUpperCase();
+function formatTimer(seconds: number): string {
+  const sec = Math.max(0, Math.ceil(seconds));
+  const mm = Math.floor(sec / 60)
+    .toString()
+    .padStart(2, '0');
+  const ss = (sec % 60).toString().padStart(2, '0');
+  return `${mm}:${ss}`;
 }
 
-function difficultyColor(difficulty: string | undefined): string {
-  if (difficulty === 'hard') return '#f87171';
-  if (difficulty === 'medium') return '#fb923c';
-  return '#4ade80';
-}
-
-export const DuelGameScreen: React.FC<Props> = ({ onDuelEnd, onBoardDragChange }) => {
+export const DuelGameScreen: React.FC<Props> = ({
+  playerName,
+  onDuelEnd,
+  onBoardDragChange,
+}) => {
   const {
     currentPuzzle,
     puzzleIndex,
@@ -51,13 +58,12 @@ export const DuelGameScreen: React.FC<Props> = ({ onDuelEnd, onBoardDragChange }
   const puzzleEpochRef = useRef(0);
 
   const opponentLabel = opponentName || opponentProgress.displayName || 'Opponent';
-  const scoreDelta = myScore - opponentProgress.score;
-  const scoreDeltaText =
-    scoreDelta > 0
-      ? `+${formatScore(scoreDelta)} ahead`
-      : scoreDelta < 0
-        ? `${formatScore(Math.abs(scoreDelta))} behind`
-        : 'Tied';
+  const youLabel = playerName.trim() || 'You';
+  const opponentReady =
+    opponentProgress.ready === true ||
+    opponentProgress.connected === true ||
+    phase === 'playing';
+  const timeExpired = timeRemaining <= 0;
 
   useEffect(() => {
     if (phase === 'result') {
@@ -143,14 +149,24 @@ export const DuelGameScreen: React.FC<Props> = ({ onDuelEnd, onBoardDragChange }
     [timeExpired, trySubmit],
   );
 
+  const handleResetPath = useCallback(() => {
+    const puzzle = puzzleRef.current;
+    if (!puzzle || submittingRef.current || timeExpired) {
+      return;
+    }
+    setPath([puzzle.startCell]);
+    setMisses(0);
+    setBacktracks(0);
+  }, [timeExpired]);
+
   const handleForfeit = useCallback(() => {
     Alert.alert(
-      'Leave duel?',
-      'You will forfeit and your opponent wins.',
+      'Quit duel?',
+      'You will forfeit and see the final scoreboard. Your opponent wins.',
       [
         { text: 'Stay', style: 'cancel' },
         {
-          text: 'Leave',
+          text: 'Quit',
           style: 'destructive',
           onPress: () => {
             void forfeit();
@@ -161,33 +177,6 @@ export const DuelGameScreen: React.FC<Props> = ({ onDuelEnd, onBoardDragChange }
   }, [forfeit]);
 
   const timerSec = Math.ceil(timeRemaining);
-  const timerColor = timerSec <= 15 ? '#ff6b6b' : '#f5f5ff';
-  const timeExpired = timeRemaining <= 0;
-
-  const currentWord = useMemo(() => {
-    if (!currentPuzzle || path.length === 0) {
-      return '';
-    }
-    const { cells, gridSize } = currentPuzzle;
-    return path
-      .map((p) => {
-        if (
-          p.row < 0 ||
-          p.col < 0 ||
-          p.row >= gridSize ||
-          p.col >= gridSize
-        ) {
-          return '';
-        }
-        return cells[p.row]?.[p.col]?.letter ?? '';
-      })
-      .filter(Boolean)
-      .join('');
-  }, [currentPuzzle, path]);
-
-  const isSolved =
-    !!currentPuzzle && isSuccessfulSolve(currentPuzzle, path);
-
   const showBanner = Boolean(connectionError || isReconnecting);
   const showOpponentToast = opponentSolveFlash;
   const showFlash = flash !== null;
@@ -196,6 +185,12 @@ export const DuelGameScreen: React.FC<Props> = ({ onDuelEnd, onBoardDragChange }
   if (!currentPuzzle) {
     return (
       <View style={styles.loading}>
+        <TouchableOpacity
+          style={[styles.topQuitBtn, styles.loadingQuitBtn]}
+          onPress={handleForfeit}
+        >
+          <Text style={styles.topQuitBtnText}>Quit</Text>
+        </TouchableOpacity>
         <Text style={styles.loadingText}>
           {puzzleUnavailable ? 'No more puzzles available' : 'Loading puzzle…'}
         </Text>
@@ -203,59 +198,55 @@ export const DuelGameScreen: React.FC<Props> = ({ onDuelEnd, onBoardDragChange }
     );
   }
 
-  const diff = currentPuzzle.difficulty ?? 'easy';
+  const clueText =
+    currentPuzzle.clue?.trim() ||
+    'Connect the letters in order to reveal the hidden answer';
 
   return (
     <View style={styles.container}>
-      <View style={styles.headerBlock}>
-        <View style={styles.matchHeader}>
-          <Text style={styles.matchTitle} numberOfLines={1}>
-            You vs {opponentLabel}
+      <View style={styles.topBarRow}>
+        <View style={styles.brandBlock}>
+          <Text style={styles.brandTitle}>Jupiter</Text>
+          <Text style={styles.brandTagline}>Your money companion</Text>
+        </View>
+        <TouchableOpacity style={styles.topQuitBtn} onPress={handleForfeit}>
+          <Text style={styles.topQuitBtnText}>Quit</Text>
+        </TouchableOpacity>
+      </View>
+
+      <View style={styles.matchRow}>
+        <View style={styles.playerCol}>
+          <PlayerAvatar name={youLabel} size={54} />
+          <Text style={styles.playerName} numberOfLines={1}>
+            {youLabel}
           </Text>
-          <View style={styles.headerRight}>
-            <View style={[styles.diffBadge, { borderColor: difficultyColor(diff) }]}>
-              <Text style={[styles.diffBadgeText, { color: difficultyColor(diff) }]}>
-                {difficultyLabel(diff)}
-              </Text>
-            </View>
-            <Text style={styles.puzzleCounter}>#{puzzleIndex + 1}</Text>
-          </View>
+          <Text style={styles.playerScore}>{formatScore(myScore)}</Text>
         </View>
 
-        <View style={styles.topBar}>
-          <View style={styles.statBox}>
-            <Text style={styles.statLabel}>TIME</Text>
-            <Text style={[styles.statValue, { color: timerColor }]}>
-              {Math.floor(timerSec / 60)}:{(timerSec % 60).toString().padStart(2, '0')}
-            </Text>
-          </View>
-          <View style={styles.statBox}>
-            <Text style={styles.statLabel}>YOU</Text>
-            <Text style={styles.statValue}>{formatScore(myScore)}</Text>
-          </View>
-          <View style={styles.statBox}>
-            <Text style={styles.statLabel} numberOfLines={1}>
-              {opponentLabel.toUpperCase()}
-            </Text>
-            <Text style={styles.statValue}>
-              {formatScore(opponentProgress.score)} ({opponentProgress.solved})
-            </Text>
-          </View>
+        <View style={styles.timerBadge}>
+          <Text style={[styles.timerText, timerSec <= 15 && styles.timerUrgent]}>
+            {formatTimer(timeRemaining)}
+          </Text>
         </View>
 
-        <Text style={styles.scoreDelta}>{scoreDeltaText}</Text>
+        <View style={styles.playerCol}>
+          <PlayerAvatar name={opponentLabel} size={54} />
+          <Text style={styles.playerName} numberOfLines={1}>
+            {opponentLabel}
+          </Text>
+          {opponentReady ? (
+            <Text style={styles.playerScore}>{formatScore(opponentProgress.score)}</Text>
+          ) : (
+            <Text style={styles.waitingText}>waiting...</Text>
+          )}
+        </View>
+      </View>
+
+      <View style={styles.clueCard}>
+        <Text style={styles.clueText}>{clueText}</Text>
       </View>
 
       <View style={styles.boardBlock}>
-        <WordDisplay
-          targetWord={currentPuzzle.targetWord}
-          currentWord={currentWord}
-          isSolved={isSolved}
-          hideTargetWord
-          showSolvedBanner={false}
-          misses={misses}
-          backtracks={backtracks}
-        />
         <GameBoard
           key={`${currentPuzzle.id}-${puzzleIndex}`}
           puzzle={currentPuzzle}
@@ -265,6 +256,7 @@ export const DuelGameScreen: React.FC<Props> = ({ onDuelEnd, onBoardDragChange }
           onMiss={() => setMisses((m) => m + 1)}
           onBacktrack={() => setBacktracks((b) => b + 1)}
           interactionLocked={submitting || timeExpired}
+          accent="jupiter"
         />
 
         <View pointerEvents="none" style={styles.overlayLayer}>
@@ -315,8 +307,12 @@ export const DuelGameScreen: React.FC<Props> = ({ onDuelEnd, onBoardDragChange }
         </View>
       </View>
 
-      <TouchableOpacity style={styles.forfeitBtn} onPress={handleForfeit}>
-        <Text style={styles.forfeitBtnText}>Leave duel</Text>
+      <TouchableOpacity
+        style={styles.resetBtn}
+        onPress={handleResetPath}
+        disabled={submitting || timeExpired}
+      >
+        <Text style={styles.resetBtnText}>Reset</Text>
       </TouchableOpacity>
     </View>
   );
@@ -325,11 +321,114 @@ export const DuelGameScreen: React.FC<Props> = ({ onDuelEnd, onBoardDragChange }
 const styles = StyleSheet.create({
   container: {
     flex: 1,
-    paddingHorizontal: 12,
-    paddingTop: 8,
+    paddingHorizontal: 16,
+    paddingTop: 4,
+    backgroundColor: '#0a0a0a',
   },
-  headerBlock: {
-    gap: 8,
+  topBarRow: {
+    flexDirection: 'row',
+    alignItems: 'flex-start',
+    justifyContent: 'space-between',
+    marginBottom: 6,
+  },
+  brandBlock: {
+    alignItems: 'flex-start',
+    flex: 1,
+  },
+  brandTitle: {
+    color: ACCENT,
+    fontSize: 28,
+    fontWeight: '800',
+    letterSpacing: 0.5,
+  },
+  brandTagline: {
+    color: '#8a8a8a',
+    fontSize: 12,
+    marginTop: 2,
+  },
+  topQuitBtn: {
+    paddingVertical: 8,
+    paddingHorizontal: 14,
+    borderRadius: 16,
+    borderWidth: 1,
+    borderColor: '#444',
+    backgroundColor: '#1a1a1a',
+    marginTop: 4,
+  },
+  topQuitBtnText: {
+    color: '#ccc',
+    fontSize: 14,
+    fontWeight: '700',
+  },
+  loadingQuitBtn: {
+    position: 'absolute',
+    top: 12,
+    right: 16,
+  },
+  matchRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    marginBottom: 14,
+    paddingHorizontal: 4,
+  },
+  playerCol: {
+    width: 96,
+    alignItems: 'center',
+    gap: 4,
+  },
+  playerName: {
+    color: '#f0f0f0',
+    fontSize: 13,
+    fontWeight: '700',
+    maxWidth: 96,
+    textAlign: 'center',
+  },
+  playerScore: {
+    color: ACCENT,
+    fontSize: 22,
+    fontWeight: '800',
+  },
+  waitingText: {
+    color: '#8a8a8a',
+    fontSize: 13,
+    fontWeight: '600',
+    fontStyle: 'italic',
+  },
+  timerBadge: {
+    backgroundColor: '#1a1a1a',
+    borderRadius: 12,
+    paddingHorizontal: 16,
+    paddingVertical: 10,
+    borderWidth: 1,
+    borderColor: '#2a2a2a',
+    minWidth: 88,
+    alignItems: 'center',
+  },
+  timerText: {
+    color: ACCENT,
+    fontSize: 22,
+    fontWeight: '800',
+    fontVariant: ['tabular-nums'],
+  },
+  timerUrgent: {
+    color: '#ff6b6b',
+  },
+  clueCard: {
+    backgroundColor: '#1a1a1a',
+    borderRadius: 14,
+    paddingHorizontal: 16,
+    paddingVertical: 14,
+    marginBottom: 8,
+    borderWidth: 1,
+    borderColor: '#2a2a2a',
+  },
+  clueText: {
+    color: '#e8e8e8',
+    fontSize: 15,
+    lineHeight: 22,
+    textAlign: 'center',
+    fontWeight: '500',
   },
   boardBlock: {
     flex: 1,
@@ -363,7 +462,7 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     justifyContent: 'center',
     minHeight: 48,
-    backgroundColor: 'rgba(15, 15, 24, 0.88)',
+    backgroundColor: 'rgba(10, 10, 10, 0.9)',
     borderRadius: 10,
     paddingHorizontal: 12,
     paddingVertical: 8,
@@ -372,7 +471,7 @@ const styles = StyleSheet.create({
     ...StyleSheet.absoluteFillObject,
     alignItems: 'center',
     justifyContent: 'center',
-    backgroundColor: 'rgba(8, 8, 16, 0.72)',
+    backgroundColor: 'rgba(8, 8, 8, 0.72)',
   },
   timeUpBox: {
     alignItems: 'center',
@@ -380,7 +479,7 @@ const styles = StyleSheet.create({
     paddingHorizontal: 24,
     paddingVertical: 16,
     borderRadius: 12,
-    backgroundColor: 'rgba(15, 15, 24, 0.95)',
+    backgroundColor: 'rgba(15, 15, 15, 0.95)',
     borderWidth: 1,
     borderColor: '#ff6b6b55',
   },
@@ -416,73 +515,6 @@ const styles = StyleSheet.create({
     borderRadius: 8,
     overflow: 'hidden',
   },
-  matchHeader: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    alignItems: 'center',
-    paddingHorizontal: 4,
-    minHeight: 22,
-  },
-  matchTitle: {
-    color: '#ccc',
-    fontSize: 14,
-    fontWeight: '600',
-    flex: 1,
-    marginRight: 8,
-  },
-  headerRight: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 8,
-  },
-  diffBadge: {
-    borderWidth: 1,
-    borderRadius: 6,
-    paddingHorizontal: 8,
-    paddingVertical: 2,
-  },
-  diffBadgeText: {
-    fontSize: 11,
-    fontWeight: '800',
-    letterSpacing: 0.5,
-  },
-  puzzleCounter: {
-    color: '#7c6cff',
-    fontSize: 14,
-    fontWeight: '700',
-    minWidth: 28,
-    textAlign: 'right',
-  },
-  topBar: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    paddingHorizontal: 8,
-    paddingVertical: 8,
-    backgroundColor: '#1a1a28',
-    borderRadius: 12,
-    minHeight: 56,
-  },
-  statBox: {
-    alignItems: 'center',
-    flex: 1,
-  },
-  statLabel: {
-    color: '#888',
-    fontSize: 11,
-    letterSpacing: 1,
-  },
-  statValue: {
-    color: '#f5f5ff',
-    fontSize: 20,
-    fontWeight: '800',
-  },
-  scoreDelta: {
-    textAlign: 'center',
-    color: '#94a3b8',
-    fontSize: 13,
-    fontWeight: '600',
-    minHeight: 18,
-  },
   flashBox: {
     alignItems: 'center',
     gap: 4,
@@ -509,23 +541,23 @@ const styles = StyleSheet.create({
     padding: 40,
     alignItems: 'center',
     justifyContent: 'center',
+    backgroundColor: '#0a0a0a',
   },
   loadingText: {
     color: '#aaa',
   },
-  forfeitBtn: {
-    backgroundColor: '#2a1a1a',
-    borderRadius: 10,
-    paddingVertical: 12,
+  resetBtn: {
+    borderRadius: 28,
+    paddingVertical: 14,
     alignItems: 'center',
-    borderWidth: 1,
-    borderColor: '#663333',
-    marginTop: 8,
+    borderWidth: 1.5,
+    borderColor: ACCENT_SOFT,
+    marginTop: 4,
     marginBottom: 8,
   },
-  forfeitBtnText: {
-    color: '#ff6b6b',
+  resetBtnText: {
+    color: ACCENT,
     fontWeight: '700',
-    fontSize: 15,
+    fontSize: 16,
   },
 });

@@ -16,6 +16,12 @@ async def forfeit_live_duel(duel_id: str, body: ForfeitBody):
     return await live_duels_controller.forfeit_live_duel(duel_id, body)
 
 
+@router.post("/{duel_id}/abort")
+async def abort_live_duel(duel_id: str, body: ForfeitBody):
+    """Cancel a matched duel before it starts (waiting / countdown). Returns home — no scoreboard."""
+    return await live_duels_controller.abort_live_duel(duel_id, body)
+
+
 @router.post("/queue/bot")
 async def join_bot_duel(body: BotDuelBody):
     """Start an immediate duel against a bot opponent (used when queue is empty)."""
