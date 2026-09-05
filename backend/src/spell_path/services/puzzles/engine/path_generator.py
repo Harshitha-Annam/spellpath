@@ -128,7 +128,7 @@ class HamiltonianPathGenerator:
 
         n = max(self.rows, self.cols)
         log2n = math.log2(max(2, n))
-        total_moves = max(1, int(round(self.quality_factor * 20 * self.rows * self.cols * log2n)))
+        total_moves = max(0, int(round(self.quality_factor * 20 * self.rows * self.cols * log2n)))
 
         for _ in range(total_moves):
             end = "head" if random.random() < 0.5 else "tail"
@@ -152,6 +152,23 @@ class HamiltonianPathGenerator:
 
         return path
 
+    def _light_mix(self, successful_moves: int) -> List[Cell]:
+        """Start from snake and apply a small number of successful backbite moves."""
+        path = make_snake_path(self.rows, self.cols)
+        index_grid = build_index_grid(path, self.rows, self.cols)
+        applied = 0
+        for _ in range(successful_moves * 40):
+            if applied >= successful_moves:
+                break
+            end = "head" if random.random() < 0.5 else "tail"
+            direction = random.choice(DIR_LIST)
+            new_path = attempt_move(path, index_grid, end, direction, self.rows, self.cols)
+            if new_path is not None:
+                path = new_path
+                index_grid = build_index_grid(path, self.rows, self.cols)
+                applied += 1
+        return path
+
     def generate_for_complexity(
         self,
         targets: Dict,
@@ -161,7 +178,29 @@ class HamiltonianPathGenerator:
         """
         Generate several candidate paths and keep the one closest to the
         path-complexity targets (turns / max straight).
+
+        path_complexity == 0 always returns the pure column zig-zag snake.
         """
+        complexity = float(targets["path_complexity"])
+        meta_base = {
+            "target_turns": int(targets["target_turns"]),
+            "min_turns": int(targets["min_turns"]),
+            "target_max_straight": int(targets["max_straight"]),
+            "path_complexity": complexity,
+        }
+
+        # Hard lock: zero complexity must be the unmodified snake path.
+        if complexity <= 0.0:
+            path = make_snake_path(self.rows, self.cols)
+            return path, {
+                **meta_base,
+                "turns": count_turns(path),
+                "max_straight": max_straight_run(path),
+                "score": 0.0,
+                "attempts": 0,
+                "matched_band": True,
+            }
+
         attempts = max(1, int(attempts))
         best_path: Optional[List[Cell]] = None
         best_score = float("-inf")
@@ -169,7 +208,6 @@ class HamiltonianPathGenerator:
 
         base_qf = self.quality_factor
         scaled_qf = max(0.0, base_qf * float(targets.get("qf_scale", 1.0)))
-        complexity = float(targets["path_complexity"])
         turn_tol = max(2, int(round(int(targets["target_turns"]) * 0.2)))
 
         def consider(path: List[Cell], attempt: int) -> bool:
@@ -195,32 +233,22 @@ class HamiltonianPathGenerator:
             )
 
         try:
-            # Always score the pure snake — ideal low-complexity baseline.
-            if consider(make_snake_path(self.rows, self.cols), 0):
-                best_meta["target_turns"] = int(targets["target_turns"])
-                best_meta["min_turns"] = int(targets["min_turns"])
-                best_meta["target_max_straight"] = int(targets["max_straight"])
-                best_meta["path_complexity"] = complexity
-                return best_path, best_meta
-
-            # Blend quality_factor across attempts so mid/high complexity explores
-            # both lightly and heavily mixed paths.
-            for attempt in range(1, attempts + 1):
-                frac = attempt / attempts
-                # Low complexity: stay near scaled_qf (tiny). High: ramp up mixing.
-                if complexity <= 35:
-                    self.quality_factor = max(0.0, scaled_qf * (0.5 + frac))
-                else:
+            # Slight complexity: a few successful backbite moves off the snake.
+            if complexity <= 20:
+                consider(make_snake_path(self.rows, self.cols), 0)
+                for attempt in range(1, max(attempts, 12) + 1):
+                    moves = 1 if attempt <= 4 else (2 if attempt <= 8 else 3)
+                    if consider(self._light_mix(moves), attempt):
+                        break
+            else:
+                for attempt in range(1, attempts + 1):
+                    frac = attempt / attempts
                     self.quality_factor = max(0.05, scaled_qf * (0.35 + 1.1 * frac))
-                path = self.generate(circuits_only=circuits_only)
-                if consider(path, attempt):
-                    break
+                    path = self.generate(circuits_only=circuits_only)
+                    if consider(path, attempt):
+                        break
         finally:
             self.quality_factor = base_qf
 
         assert best_path is not None
-        best_meta["target_turns"] = int(targets["target_turns"])
-        best_meta["min_turns"] = int(targets["min_turns"])
-        best_meta["target_max_straight"] = int(targets["max_straight"])
-        best_meta["path_complexity"] = complexity
-        return best_path, best_meta
+        return best_path, {**meta_base, **best_meta}

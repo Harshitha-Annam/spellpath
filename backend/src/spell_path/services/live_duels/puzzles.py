@@ -13,22 +13,23 @@ from spell_path.services.puzzles.engine.config import DIFFICULTY_TO_SIZE, SIZE_P
 
 logger = logging.getLogger("live_duels.puzzles")
 
-# First four puzzles stay on easy boards; path complexity ramps before size/walls do.
-# 0–1: easy + pure snake zig-zag (path_complexity 0)
-# 2–3: easy + high path complexity
-# 4–6: medium
-# 7+:  hard
-_SNAKE_PATH_COMPLEXITY = 0.0
-_HIGH_PATH_COMPLEXITY = 75.0
-_MEDIUM_PATH_COMPLEXITY = 55.0
+# Easy boards first (indices 0–5), then the same path-complexity ramp on medium (6–11).
+# Within each difficulty band:
+#   0: pure zig-zag snake
+#   1: slight twists (~1–2 extra turns)
+#   2–3: normal path complexity
+#   4–5: good / woven path complexity
+_PATH_COMPLEXITY_RAMP = (0.0, 15.0, 45.0, 45.0, 75.0, 75.0)
+_EASY_COUNT = len(_PATH_COMPLEXITY_RAMP)
+_MEDIUM_COUNT = len(_PATH_COMPLEXITY_RAMP)
 _HARD_PATH_COMPLEXITY = 70.0
 
 
 def difficulty_for_index(index: int) -> str:
-    """Ramp difficulty during a duel after four easy warm-up puzzles."""
-    if index < 4:
+    """Ramp difficulty: 6 easy → 6 medium → hard."""
+    if index < _EASY_COUNT:
         return "easy"
-    if index < 7:
+    if index < _EASY_COUNT + _MEDIUM_COUNT:
         return "medium"
     return "hard"
 
@@ -37,15 +38,13 @@ def path_complexity_for_index(index: int) -> float:
     """
     Path twistiness for the shared duel sequence.
 
-    First two puzzles are a pure column zig-zag snake, then easy boards
-    with woven paths, then climb difficulty.
+    Repeats the same complexity ramp on easy, then again on medium.
     """
-    if index < 2:
-        return _SNAKE_PATH_COMPLEXITY
-    if index < 4:
-        return _HIGH_PATH_COMPLEXITY
-    if index < 7:
-        return _MEDIUM_PATH_COMPLEXITY
+    if index < _EASY_COUNT:
+        return _PATH_COMPLEXITY_RAMP[index]
+    medium_index = index - _EASY_COUNT
+    if medium_index < _MEDIUM_COUNT:
+        return _PATH_COMPLEXITY_RAMP[medium_index]
     return _HARD_PATH_COMPLEXITY
 
 
